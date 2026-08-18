@@ -10,7 +10,7 @@ import { COLORS, FONT, hex } from '../theme';
 import { PACK } from '../levels';
 import { progress } from '../progress';
 import { applyMuteFromSave, SOUND_KEYS } from '../audio';
-import { buildLogoCard, drawShadow } from '../ui';
+import { buildLogoCard, drawShadow, ambientBackdrop } from '../ui';
 import { getSdk, initSdk } from '../../sdk/sdk';
 import { t } from '../i18n';
 
@@ -33,6 +33,7 @@ export class BootScene extends Phaser.Scene {
     const { width, height } = this.cameras.main;
     this.cameras.main.setBackgroundColor(COLORS.bg);
 
+    ambientBackdrop(this, 2);
     buildLogoCard(this, width / 2, height * 0.4);
 
     this.barX = (width - BAR_WIDTH) / 2;

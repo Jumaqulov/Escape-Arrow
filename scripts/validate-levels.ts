@@ -19,18 +19,23 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const FILE = resolve(HERE, '../src/levels/levels.json');
 
 interface Budget {
-  size: number;
+  /** Grid bounds across the chapter, first level to last. */
+  minSize: number;
+  maxSize: number;
   minArrows: number;
   maxArrows: number;
   minTail: number;
   maxTail: number;
-  maxInitialFree: number;
 }
 
+/**
+ * Ranges, not fixed values: every level inside a chapter sits somewhere on a
+ * ramp, so the gate checks the band rather than one number.
+ */
 const BUDGETS: Budget[] = [
-  { size: 6, minArrows: 4, maxArrows: 5, minTail: 1, maxTail: 2, maxInitialFree: 3 },
-  { size: 7, minArrows: 5, maxArrows: 7, minTail: 2, maxTail: 4, maxInitialFree: 3 },
-  { size: 8, minArrows: 6, maxArrows: 8, minTail: 3, maxTail: 5, maxInitialFree: 4 },
+  { minSize: 8, maxSize: 18, minArrows: 5, maxArrows: 50, minTail: 1, maxTail: 3 },
+  { minSize: 14, maxSize: 21, minArrows: 30, maxArrows: 75, minTail: 1, maxTail: 4 },
+  { minSize: 18, maxSize: 26, minArrows: 50, maxArrows: 110, minTail: 1, maxTail: 4 },
 ];
 
 function signatureOf(level: LevelData): string {
@@ -94,26 +99,22 @@ pack.chapters.forEach((chapter, ci) => {
     stats.push(a);
 
     if (budget) {
-      if (level.w !== budget.size || level.h !== budget.size) {
-        errors.push(`${where}: expected ${budget.size}x${budget.size}, got ${level.w}x${level.h}`);
+      const size = Math.max(level.w, level.h);
+      if (size < budget.minSize || size > budget.maxSize) {
+        errors.push(`${where}: ${level.w}x${level.h} outside grid band ${budget.minSize}-${budget.maxSize}`);
       }
       if (a.arrows < budget.minArrows || a.arrows > budget.maxArrows) {
-        errors.push(
-          `${where}: ${a.arrows} arrows outside budget ${budget.minArrows}-${budget.maxArrows}`,
-        );
+        errors.push(`${where}: ${a.arrows} arrows outside budget ${budget.minArrows}-${budget.maxArrows}`);
       }
       if (a.minTail < budget.minTail || a.maxTail > budget.maxTail) {
         errors.push(
           `${where}: tails ${a.minTail}-${a.maxTail} outside budget ${budget.minTail}-${budget.maxTail}`,
         );
       }
-      if (a.initialFree > budget.maxInitialFree) {
-        errors.push(`${where}: initialFree ${a.initialFree} > ${budget.maxInitialFree}`);
-      }
       if (a.initialFree < 1) {
         errors.push(`${where}: no opening move`);
       }
-      if (a.density > 0.85) {
+      if (a.density > 0.9) {
         errors.push(`${where}: density ${(a.density * 100).toFixed(0)}% leaves no room to read the board`);
       }
     }
@@ -128,14 +129,14 @@ function histogram(values: number[], buckets: number[]): string {
       const next = buckets[i + 1] ?? Number.POSITIVE_INFINITY;
       const n = values.filter((v) => v >= edge && v < next).length;
       const label = next === Number.POSITIVE_INFINITY ? `${edge}+` : `${edge}-${next - 1}`;
-      return `    ${label.padStart(7)} | ${'#'.repeat(n)} ${n}`;
+      return `    ${label.padStart(7)} | ${'#'.repeat(Math.min(n, 60))} ${n}`;
     })
     .join('\n');
 }
 
 const all = perChapter.flat();
 const avg = (nums: number[]): string =>
-  nums.length ? (nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : '-';
+  nums.length ? (nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(1) : '-';
 
 console.log(`Arrow Escape - level validation (format v${pack.version})`);
 console.log(`  file:   ${FILE}`);
@@ -144,24 +145,17 @@ console.log('');
 
 pack.chapters.forEach((chapter, ci) => {
   const stats = perChapter[ci] ?? [];
-  const bands = { easy: 0, medium: 0, hard: 0, brutal: 0 };
-  for (const s of stats) bands[s.band]++;
+  const arrows = stats.map((s) => s.arrows);
   console.log(
-    `  ${chapter.name}: ${stats.length} levels | arrows ${avg(stats.map((s) => s.arrows))} | ` +
-      `cells ${avg(stats.map((s) => s.cells))} | initialFree ${avg(stats.map((s) => s.initialFree))} | ` +
-      `difficulty ${avg(stats.map((s) => s.difficulty))}`,
-  );
-  console.log(
-    `    bands: easy ${bands.easy}, medium ${bands.medium}, hard ${bands.hard}, brutal ${bands.brutal}`,
+    `  ${chapter.name}: ${stats.length} levels | arrows ${Math.min(...arrows)}-${Math.max(...arrows)} ` +
+      `(avg ${avg(arrows)}) | cells ${avg(stats.map((s) => s.cells))} | ` +
+      `density ${avg(stats.map((s) => s.density * 100))}% | openings ${avg(stats.map((s) => s.initialFree))}`,
   );
 });
 
 console.log('');
-console.log('  difficulty distribution (all levels):');
-console.log(histogram(all.map((s) => s.difficulty), [0, 20, 30, 40, 50, 60, 70, 80]));
-console.log('');
-console.log('  opening moves available:');
-console.log(histogram(all.map((s) => s.initialFree), [1, 2, 3, 4, 5]));
+console.log('  arrows per level:');
+console.log(histogram(all.map((s) => s.arrows), [0, 10, 25, 40, 55, 70, 85, 100]));
 console.log('');
 
 if (errors.length > 0) {

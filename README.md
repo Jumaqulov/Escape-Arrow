@@ -1,15 +1,15 @@
 # Arrow Escape
 
-A minimalist grid puzzle for **Yandex Games** and **CrazyGames**.
+A dense grid puzzle for **Yandex Games** and **CrazyGames**.
 
-The board is full of arrows, each one a head with a tail trailing behind it.
-Tap an arrow and the whole thing slides off the board — but only if the head's
-straight path to the edge is empty. Anything in the way, and it stays put and
-costs you a heart. Clear every arrow to finish the level.
+The board is packed with arrows, each one a head with a tail trailing behind
+it. Tap an arrow and the whole thing slides off the board — but only if the
+head's straight path to the edge is empty. Anything in the way and it stays
+put, costing a heart. Clear every arrow before the clock runs out.
 
 Built with **Vite + TypeScript (strict) + Phaser 3**. No sprites, no images, no
 raster assets, no web fonts: every pixel on screen is drawn with
-`Phaser.Graphics`. Production build is **~339 KB gzipped**.
+`Phaser.Graphics`. Production build is **~377 KB gzipped**.
 
 ---
 
@@ -20,9 +20,9 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-That is all you need — with no portal SDK present the game falls back to
-`stubSdk`, which stores progress in `localStorage` and grants every rewarded ad
-instantly so you can exercise the hint/undo/refill flows offline.
+With no portal SDK present the game falls back to `stubSdk`, which stores
+progress in `localStorage` and grants every rewarded ad instantly, so the
+hint / eraser / grid / refill flows can all be exercised offline.
 
 ## Scripts
 
@@ -31,8 +31,8 @@ instantly so you can exercise the hint/undo/refill flows offline.
 | `npm run dev` | Vite dev server with HMR |
 | `npm run build` | Type-check (`tsc --noEmit`) then build to `dist/` |
 | `npm run preview` | Serve the built `dist/` locally, exactly as a portal would |
-| `npm run validate` | Solve-check all 150 levels + print the difficulty distribution |
-| `npm run generate` | Regenerate `src/levels/levels.json` from the seeded generator |
+| `npm run validate` | Solve-check all 150 levels + print the difficulty spread |
+| `npm run generate` | Regenerate `src/levels/levels.json` (~35 s) |
 | `npm run sounds` | Regenerate the four WAVs in `public/sounds/` |
 | `npm run zip` | Package `dist/` into `release/arrow-escape.zip` |
 | `npm run release` | `validate` → `build` → `zip` in one go |
@@ -41,38 +41,188 @@ instantly so you can exercise the hint/undo/refill flows offline.
 unsolvable, malformed, duplicated, or outside its chapter's design budget.
 
 ```
-Chapter 1: 50 levels | arrows 4.50 | cells 11.28 | initialFree 1.66 | difficulty 29.14
-Chapter 2: 50 levels | arrows 6.00 | cells 23.38 | initialFree 1.64 | difficulty 42.06
-Chapter 3: 50 levels | arrows 7.00 | cells 34.70 | initialFree 1.90 | difficulty 47.12
+Chapter 1: 50 levels | arrows 5-46  (avg 36.9) | density 51.6% | openings 15.3
+Chapter 2: 50 levels | arrows 44-70 (avg 61.8) | density 65.3% | openings 28.2
+Chapter 3: 50 levels | arrows 74-102(avg 92.8) | density 62.2% | openings 39.8
 OK - all 150 levels are solvable and within budget.
 ```
 
 ---
 
+## How the puzzle works
+
+An arrow is a **head cell plus an orthogonal tail**: `tail[0]` is adjacent to
+the head, `tail[i+1]` to `tail[i]`, no cell repeats. The cells it occupies are
+head + tail.
+
+`isFree(arrow, board)` walks from the **head** towards the edge in the arrow's
+own direction and returns false the moment it meets a cell belonging to another
+arrow.
+
+The key property: **removing an arrow can only empty cells, never fill them.**
+So freedom is monotone — an arrow that is free stays free no matter what else
+you take first. Two consequences:
+
+1. A single greedy sweep is an **exact** solvability test. `solve()` needs no
+   search and no backtracking.
+2. The *puzzle* has no lose state. A validated board cannot be bricked, so
+   hearts and the clock are the only pressure, and both refill.
+
+That monotonicity is also why the **Eraser** tool is safe: deleting an arrow
+outright only ever frees cells, so the rest of the board stays solvable.
+
+### Two invariants the renderer depends on
+
+- **The tail never sits on its own head's ray**, so an arrow can always slide
+  out through its own body.
+- **The neck rule**: `tail[0]` is always `head - dir`, giving every head a
+  straight shaft to grow out of. Without it a head whose tail turns immediately
+  reads as pointing along the tail, which looks like a rotation bug.
+
+Both are enforced by the generator *and* re-checked by `structuralErrors()`, so
+a hand-written level cannot smuggle in a violation.
+
+### The generator builds levels backwards
+
+`generateLevel()` starts from an empty board and adds arrows one at a time:
+
+1. place a **head** whose ray to the edge is clear of every occupied cell, and
+   which has a free cell directly behind it for the neck;
+2. lay the **neck**;
+3. grow the rest of the **tail** by a random walk through empty cells, never
+   touching the head's own ray.
+
+The arrows already placed are exactly the ones still on the board when the new
+one is tapped, so replaying the placement order in reverse is a guaranteed
+solution. The tail *is* free to lie across an **earlier** arrow's ray — that
+arrow is tapped later, by which time this one is long gone. That is what turns
+a pile of arrows into a dependency chain.
+
+Two details let it reach reference density (~60% of cells) instead of stalling
+around 27 arrows:
+
+- a tail walk that gets boxed in **keeps what it has** rather than throwing the
+  whole board away, provided it met `minTail`;
+- running out of legal heads **ends the board** instead of discarding it.
+
+On the biggest grids `walk: 'open'` switches the tail to Warnsdorff's rule —
+always step into the cell that keeps the most exits free.
+
+Everything is seeded (Mulberry32), so `npm run generate` is reproducible: the
+same `BASE_SEED` always yields the same 150 levels.
+
+### Level format (v2)
+
+```json
+{
+  "version": 2,
+  "chapters": [
+    { "name": "Chapter 1", "levels": [
+      { "id": 1, "w": 8, "h": 10, "arrows": [ { "x": 3, "y": 3, "d": "L", "t": "RU" } ] }
+    ] }
+  ]
+}
+```
+
+`x`/`y` are the head, `d` is the direction it flies in, and `t` is the tail as
+**relative steps from the head** — `"RU"` reads as "from the head, step Right,
+then Up". `parsePack()` refuses anything that is not `version: 2`.
+
+### The difficulty ramp
+
+Level 1 is the one deliberately tiny board (5 arrows), reserved for the tap
+tutorial. From level 2 the board is already busy, on a front-loaded `t^0.45`
+curve — a sparse board is solved on sight, which is what makes players bounce.
+
+```
+level:   1    2    3    5    12   20   50   100   150
+arrows:  5    23   25   27   32   36   46   70    95
+```
+
+| Chapter | Grid | Arrows | Tail |
+| --- | --- | --- | --- |
+| 1 | 8×10 → 14×17 | 5 → 46 | 1–3 |
+| 2 | 14×17 → 17×21 | 44 → 70 | 1–4 |
+| 3 | 18×22 → 20×26 | 74 → 102 | 1–4 |
+
+---
+
+## Playing
+
+### Camera
+
+A 20×26 board squeezed into 720 px would give 30 px cells, too small for a
+thumb. So the board is drawn at a **fixed 48 px cell in world space** and the
+whole world is scaled to fit; the player zooms in from there.
+
+- mouse wheel, or the +/− buttons beside the toolbar
+- drag to pan, at a speed set by the sensitivity slider (0.5–2×)
+- movement past 12 px counts as a pan, so a drag never fires a tap
+- an axis the board already fits on is pinned dead centre; only an
+  overflowing axis can be panned, and only as far as its own edge
+- a one-off coach mark explains the zoom the first time a board overflows
+
+### Hearts and the clock
+
+Three hearts. A tap on a blocked arrow wiggles it, flashes it red, vibrates,
+draws the obstructed stretch of ray in red — so the player can see *why* — and
+costs one heart.
+
+The clock starts at `45s + 5s per arrow`. At zero, or at zero hearts, the same
+modal offers a rewarded video (+3 hearts, or +60 s) or 450 coins.
+
+### Tools
+
+Each is introduced by its own unlock ceremony and arrives with 2 charges.
+
+| Tool | Unlocks | Effect |
+| --- | --- | --- |
+| Hint | level 1 | Highlights an arrow that can exit |
+| Eraser | level 2 | Deletes whichever arrow you pick, free or not |
+| Grid | level 3 | Overlays guideline grid lines |
+
+Out of charges, the tool opens a shop: one charge for a rewarded video, or a
+pack of 3 for 200 coins.
+
+### Coins
+
+`+10` per level cleared, plus an optional rewarded `+200` on the win screen.
+Spent on tool packs and heart refills.
+
+### Stars
+
+| Stars | Condition |
+| --- | --- |
+| 3 | cleared with **no** hints and **no** undos |
+| 2 | 1–2 hints/undos used |
+| 1 | 3 or more used |
+
+No timed stars — the clock is a fail condition, never a scoring one.
+
+---
+
 ## Look
 
-Light, minimal, premium hypercasual — the whole thing is line art on paper.
+Light, minimal line art. Each chapter owns a hue, so progress is something the
+player can see: **indigo** (Rocket) → **teal** (Comet) → **violet** (Nebula).
+Only the hues move — ink darkness, contrast and dot weight are matched across
+all three, so readability is identical.
 
-| Token | Value | Used for |
-| --- | --- | --- |
-| background | `#EEF2F8` | every scene |
-| card | `#FFFFFF` | board, HUD pill, buttons, panels |
-| ink | `#14161F` | arrow line art, primary text |
-| accent | `#3B4ACB` | flying arrows, primary buttons, tabs |
-| pink | `#F04A86` | hearts, "AD" badges, the *Escape* wordmark |
-| amber | `#F5A524` | stars |
-| danger | `#E5484D` | blocked feedback |
-| dot | `#C7CDDB` | the board's dot grid (r=2, at cell corners) |
+Two Phaser limits shape the drawing code:
 
-Cards use radius 16–20 and a soft `rgba(20,22,31,0.08)` shadow, faked by
-stacking six translucent rounded rects — `Graphics` cannot blur.
+- `Graphics` cannot blur, so soft shadows and the drifting background blobs are
+  stacks of translucent shapes;
+- `Graphics` has no line cap/join setting, so every stroked shape caps its own
+  corners with a filled circle of half the line width. That is what makes the
+  arrows read as rounded line art rather than mitred sticks.
 
-Phaser's `Graphics` has no line cap/join setting either, so every stroked shape
-caps its own corners with a filled circle of half the line width. That is what
-makes the arrows read as rounded line art rather than mitred sticks.
+Head orientation comes from a single `HEAD_ANGLE` map (`{R:0, D:90, L:180,
+U:270}`) — never re-derived from `DX/DY` — and `src/game/devcheck.ts` asserts it
+in dev builds. It is tree-shaken out of production.
 
-Type is a system rounded stack, nothing fetched:
-`"Nunito", "Arial Rounded MT Bold", system-ui, -apple-system, sans-serif`.
+When an arrow flies out, the body is drawn as the **slice of its track between
+two arc lengths**, corner vertices included. Sampling only the original cell
+centres would chord across each bend and the arrow would come out skewed.
 
 ---
 
@@ -86,236 +236,91 @@ src/
                    structuralErrors(), validate()
     generator.ts   mulberry32() + reverse-build generateLevel()
     format.ts      parseLevel() / serializeLevel() / parsePack() / serializePack()
-  sdk/
-    ISdk.ts        the interface every platform implements + stubSdk
-    yandex.ts      Yandex Games adapter (cloud save, LoadingAPI, GameplayAPI, adv)
-    crazygames.ts  CrazyGames SDK v3 adapter (localStorage save, ad.requestAd)
-    sdk.ts         runtime detection + script injection + stub fallback
-    externals.d.ts ambient types for the two portal SDKs
+  sdk/             ISdk + Yandex / CrazyGames adapters + runtime detection
   game/
-    theme.ts       palette, radii, design resolution, font stack
+    theme.ts       palette, chapter palettes, radii, font stack
     i18n.ts        EN / RU / TR / ES / PT / UZ dictionary
-    levels.ts      parsed level pack + chapter/global index helpers
-    progress.ts    stars, unlocks, settings, tutorial flag; reads/writes via ISdk
-    audio.ts       mute-aware sound playback
-    ui.ts          Button, IconButton, icons, cards, dot grid, arrow line art,
-                   stars, hearts, confetti, ripples, toasts
+    progress.ts    stars, unlocks, coins, tool charges, settings
+    ui.ts          buttons, icons, cards, modals, arrow line art, effects
+    devcheck.ts    dev-only invariants (arrow head rotation)
     scenes/        Boot, Menu, LevelSelect, Level, Win, Settings
   levels/levels.json   150 levels, 3 chapters, format v2
-  main.ts          Phaser game config and entry point
-scripts/
-  generate-levels.ts   writes src/levels/levels.json
-  validate-levels.ts   the `npm run validate` gate
-  make-sounds.ts       synthesises tap / slide / win / error WAVs
-  pack-dist.ts         dependency-free ZIP writer for the release archive
-public/
-  privacy.html   privacy policy (required for CrazyGames approval)
-  favicon.svg
-  sounds/*.wav
+scripts/           generate / validate / sounds / zip
+public/            privacy.html, favicon, sounds
 ```
 
-`src/core/` never imports Phaser and never touches the DOM, so the rules can be
-run from Node — which is exactly what the level scripts do.
-
----
-
-## How the puzzle works
-
-An arrow is a **head cell plus an orthogonal tail**: `tail[0]` is adjacent to
-the head, `tail[i+1]` to `tail[i]`, no cell repeats. The cells it occupies are
-head + tail.
-
-`isFree(arrow, board)` walks from the **head** towards the edge in the arrow's
-own direction and returns false the moment it meets a cell belonging to another
-arrow. A tail never sits on its own head's ray — the generator guarantees it and
-`structuralErrors()` rejects any level that breaks it — so an arrow can always
-slide out through its own body.
-
-The key property is unchanged from the tail-less version: **removing an arrow
-can only empty cells, never fill them.** So freedom is monotone — an arrow that
-is free stays free no matter what else you take first. Two consequences:
-
-1. A single greedy sweep is an **exact** solvability test. `solve()` needs no
-   search and no backtracking.
-2. There is no lose state from the *puzzle*. A validated level cannot be
-   bricked, which is why hearts refill rather than ending the run.
-
-### The generator builds levels backwards
-
-`generateLevel()` starts from an empty board and adds arrows one at a time:
-
-1. place a **head** whose ray to the edge is clear of every cell already taken;
-2. grow a **tail** from it by a random walk through empty cells only, never
-   touching the head's own ray.
-
-The arrows already placed are exactly the ones still on the board when the new
-one gets tapped, so replaying the placement order in reverse is a guaranteed
-solution. The tail *is* free to lie across an **earlier** arrow's ray — that
-arrow is tapped later, by which time this one is long gone. That is precisely
-what turns a pile of arrows into a dependency chain rather than seven
-independent taps.
-
-Everything is seeded (Mulberry32), so `npm run generate` is reproducible — the
-same `BASE_SEED` always yields the same 150 levels, and regenerating never
-silently reshuffles a player's saved progress.
-
-### Level format (v2)
-
-```json
-{
-  "version": 2,
-  "chapters": [
-    {
-      "name": "Chapter 1",
-      "levels": [
-        { "id": 1, "w": 6, "h": 6, "arrows": [ { "x": 3, "y": 3, "d": "L", "t": "RU" } ] }
-      ]
-    }
-  ]
-}
-```
-
-`x`/`y` are the head, `d` is the direction it points and flies in, and `t` is
-the tail written as **relative steps from the head** — `"RU"` reads as "from the
-head, step Right, then Up". An empty `t` is a bare head. Arrow ids are assigned
-in file order, so they are stable across reloads.
-
-`parsePack()` refuses to load anything that is not `version: 2`, so a stale
-`levels.json` fails loudly instead of rendering nonsense.
-
-### Chapter budgets
-
-| Chapter | Grid | Arrows | Tail length | Max opening moves |
-| --- | --- | --- | --- | --- |
-| 1 | 6×6 | 4–5 | 1–2 | 3 |
-| 2 | 7×7 | 5–7 | 2–4 | 3 |
-| 3 | 8×8 | 6–8 | 3–5 | 4 |
-
-### Stars
-
-| Stars | Condition |
-| --- | --- |
-| 3 | cleared with **no** hints and **no** undos |
-| 2 | 1–2 hints/undos used |
-| 1 | 3 or more used |
-
-No timers — the brief explicitly rules out timed stars.
-
-### Hearts
-
-Three hearts per level. A tap on a blocked arrow wiggles it, flashes it red,
-vibrates, and costs one. At zero the fail overlay offers a rewarded ad to refill
-(keeping the board as it is) or a restart. Hearts are per attempt and are never
-persisted.
+`src/core/` never imports Phaser and never touches the DOM, so the rules run
+from Node — which is exactly what the level scripts do.
 
 ---
 
 ## Platform integration
 
 `src/sdk/sdk.ts` picks the adapter at runtime, injects that portal's script tag,
-and falls back to `stubSdk` if anything is missing or the script fails to load.
-**One `dist/` ships to both portals.** Detection order:
-
-1. `?platform=yandex|crazygames|stub` in the URL (handy for testing)
-2. `VITE_PLATFORM` build-time env var
-3. `window.YaGames` / `window.CrazyGames` already present
-4. hostname / referrer / `ancestorOrigins` sniffing
-5. otherwise the stub
+and falls back to `stubSdk` if anything is missing. **One `dist/` ships to both
+portals.** Detection order: `?platform=` query → `VITE_PLATFORM` → an already
+present `window.YaGames` / `window.CrazyGames` → hostname/referrer sniffing →
+stub.
 
 Both adapters call `gameplayStop()` before every ad and `gameplayStart()`
 afterwards, and every ad callback is wrapped in a timeout so a portal that never
 fires `onClose` cannot wedge the game.
 
-### Testing an adapter locally
-
 ```bash
 npm run dev
-# then open:
-#   http://localhost:5173/?platform=stub          (default)
-#   http://localhost:5173/?platform=yandex        (real Yandex SDK loads; ads no-op off-portal)
-#   http://localhost:5173/?platform=crazygames    (real CrazyGames SDK loads)
+# http://localhost:5173/?platform=stub          (default)
+# http://localhost:5173/?platform=yandex
+# http://localhost:5173/?platform=crazygames
 ```
 
-### Upload to Yandex Games
+### Publishing
 
 ```bash
 npm run release          # validate + build + zip
 ```
 
-1. Open the [Yandex Games developer console](https://games.yandex.ru/console) and
-   create a draft.
-2. Upload `release/arrow-escape.zip` in **Черновик → Загрузить архив**. The
-   archive's `index.html` is at the root, which is what the console expects.
-3. Fill in the catalogue card, and paste the URL of the deployed
-   `privacy.html` into the privacy policy field.
-4. Send for moderation. The build already calls `LoadingAPI.ready()` when the
-   loading bar reaches 100% and brackets ads with `GameplayAPI.start()` /
-   `.stop()`, which are the two things moderation checks most often.
+Upload `release/arrow-escape.zip` to the
+[Yandex console](https://games.yandex.ru/console) or the
+[CrazyGames portal](https://developer.crazygames.com/), and supply the URL of
+the deployed `privacy.html`. The build calls `LoadingAPI.ready()` /
+`loadingStop()` when the bar hits 100% and brackets ads with gameplay
+start/stop, which are the two things moderation checks most often.
 
-Cloud save is enabled through `ysdk.getPlayer()`; anonymous players fall back to
-a `localStorage` mirror automatically.
-
-### Upload to CrazyGames
-
-```bash
-npm run release
-```
-
-1. Open the [CrazyGames developer portal](https://developer.crazygames.com/) and
-   create a new game.
-2. Upload the same `release/arrow-escape.zip`.
-3. Supply a link to the hosted `privacy.html` — CrazyGames requires a reachable
-   privacy policy before approval.
-4. The build calls `SDK.game.loadingStart()` / `loadingStop()` around boot,
-   `gameplayStart()` / `gameplayStop()` around play, and requests `midgame` and
-   `rewarded` ads through `SDK.ad.requestAd()`.
-
-Bundle limits on both portals are comfortably met: the whole archive is ~379 KB
-against a 2 MB budget.
+Cloud save runs through `ysdk.getPlayer()` on Yandex; anonymous players and
+CrazyGames fall back to `localStorage`. The save schema is at **version 4** and
+repairs anything an older or corrupted write left behind.
 
 ---
 
 ## Ads
 
-- **Interstitial** — after every third completed level, shown on the *Next
-  Level* button in `WinScene` so it never interrupts play.
-- **Rewarded** — three places, all optional:
-  - *Hint* and *Undo* in the toolbar. **The first use of each is free every
-    level**; after that the button shows a pink `AD` badge and costs a video.
-  - *Refill* on the out-of-hearts overlay.
+- **Interstitial** — after every third completed level, on the *Next Level*
+  button, so it never interrupts play.
+- **Rewarded** — always optional, never a wall:
+  - `+200` coins on the win screen
+  - one tool charge, from the tool shop
+  - +3 hearts or +60 seconds, from the rescue modal
 
-Locally, `stubSdk` grants every rewarded ad instantly and logs interstitials.
-
-## Onboarding
-
-The very first time a player ever opens level 1, a pulsing hand and a `Tap!`
-bubble sit over a free arrow. It disappears on the first successful tap and the
-`tutorialDone` flag is written to the save, so it never shows again.
+Locally, `stubSdk` grants every rewarded ad instantly.
 
 ---
 
 ## Adding or changing levels
 
 ```bash
-# edit CHAPTERS / BASE_SEED in scripts/generate-levels.ts, then
+# edit CHAPTERS / OPENER / BASE_SEED in scripts/generate-levels.ts, then
 npm run generate
 npm run validate
 ```
 
-Hand-written levels are fine too — add them to `src/levels/levels.json` in the
-same format and `npm run validate` will solve-check them and check the tail
-geometry.
-
----
+Hand-written levels are fine too — add them in the same format and
+`npm run validate` will solve-check them and check the tail and neck geometry.
 
 ## Constraints honoured
 
-- `src/core/*` is engine-independent and is never imported by anything that
-  needs a browser
-- Phaser 3 only — no Unity, Godot, PixiJS, or hand-rolled canvas
-- tap input only, no swipes or virtual sticks
-- `Phaser.Graphics` only, no raster sprites, no web fonts, no CDN
+- `src/core/*` is engine-independent and never imported by anything needing a browser
+- Phaser 3 only; `Phaser.Graphics` only, no raster sprites, no web fonts, no CDN
+- tap input only for gameplay; drag and wheel drive the camera, never the puzzle
 - stars come from hints/undos, never from a timer
-- `ISdk` and its two adapters, and every scene key, are unchanged from v1
-- TypeScript `strict` with `noUnusedLocals` / `noUnusedParameters`; `npm run build`
-  fails on any type error
+- `ISdk` and its two adapters, and every scene key, are unchanged since v1
+- TypeScript `strict` with `noUnusedLocals` / `noUnusedParameters`

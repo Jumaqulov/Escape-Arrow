@@ -16,11 +16,12 @@ export function setSoundEnabled(scene: Phaser.Scene, enabled: boolean): void {
   scene.sound.mute = !enabled;
 }
 
-export function playSound(scene: Phaser.Scene, key: SoundKey): void {
+/** `rate` pitches the sample - the combo streak rides it upwards. */
+export function playSound(scene: Phaser.Scene, key: SoundKey, rate = 1): void {
   if (!progress.data.sound) return;
   if (!scene.cache.audio.exists(key)) return;
   try {
-    scene.sound.play(key, { volume: VOLUMES[key] });
+    scene.sound.play(key, { volume: VOLUMES[key], rate });
   } catch {
     // Autoplay policy or a decode failure: never let audio break gameplay.
   }

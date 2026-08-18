@@ -1,9 +1,9 @@
 /** Title screen: logo card, one big indigo PLAY, settings behind the gear. */
 import Phaser from 'phaser';
-import { COLORS, FONT, columnBounds, hex } from '../theme';
-import { Button, IconButton, buildLogoCard, drawStar, iconGear } from '../ui';
+import { COLORS, FONT, applyChapterPalette, columnBounds, hex } from '../theme';
+import { Button, IconButton, buildLogoCard, drawStar, iconGear, ambientBackdrop } from '../ui';
 import { progress } from '../progress';
-import { TOTAL_LEVELS } from '../levels';
+import { TOTAL_LEVELS, refByGlobal } from '../levels';
 import { t } from '../i18n';
 
 export class MenuScene extends Phaser.Scene {
@@ -13,7 +13,10 @@ export class MenuScene extends Phaser.Scene {
 
   create(): void {
     const { width, height } = this.cameras.main;
+    // The menu wears the colours of the chapter the player is up to.
+    applyChapterPalette(refByGlobal(progress.resumeGlobal())?.chapter ?? 0);
     this.cameras.main.setBackgroundColor(COLORS.bg);
+    ambientBackdrop(this, 3);
 
     const logo = buildLogoCard(this, width / 2, height * 0.3, 460, 232);
     this.tweens.add({

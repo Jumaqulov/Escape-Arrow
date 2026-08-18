@@ -10,7 +10,7 @@ import type { Dir } from '../core/types';
 export const DESIGN_WIDTH = 720;
 export const DESIGN_HEIGHT = 1280;
 
-export const COLORS = {
+const BASE_COLORS = {
   /** Page background. */
   bg: 0xeef2f8,
   /** Cards, pills, the board surface. */
@@ -40,9 +40,76 @@ export const COLORS = {
   iconInk: 0x5a6280,
   /** The padlock on a locked tile. */
   lockInk: 0x9aa3bd,
+  /** Drifting background blobs. */
+  ambient: 0x3b4acb,
   /** Colour the soft shadows are built from. */
   shadow: 0x14161f,
 };
+
+/**
+ * The live palette. Every widget reads these fields at draw time, so swapping
+ * chapter re-skins the whole game without threading a theme object through
+ * every constructor.
+ */
+export const COLORS = { ...BASE_COLORS };
+
+/**
+ * One palette per chapter. Progress is the thing players actually feel, and
+ * an identical board for 150 levels is what makes a puzzle game feel endless
+ * in the bad way - so each chapter owns a distinct hue.
+ *
+ * Only the hues move: contrast, ink darkness and dot weight stay matched so
+ * readability is identical in all three.
+ */
+export const CHAPTER_PALETTES: Array<Partial<typeof BASE_COLORS>> = [
+  // 1 - Rocket: indigo on cool paper.
+  {},
+  // 2 - Comet: teal on sea glass.
+  {
+    bg: 0xe9f3f2,
+    accent: 0x0e8f86,
+    accentDark: 0x0a6f68,
+    accentSoft: 0xd3e7e4,
+    ink: 0x11201f,
+    inkSoft: 0x4e6a67,
+    inkMuted: 0x93b0ac,
+    dot: 0xa8c6c2,
+    iconInk: 0x4e6e6a,
+    locked: 0xdceae8,
+    lockInk: 0x93aeaa,
+    ambient: 0x0e8f86,
+  },
+  // 3 - Nebula: violet on lilac.
+  {
+    bg: 0xf2edfa,
+    accent: 0x7a3de8,
+    accentDark: 0x5c2bb5,
+    accentSoft: 0xe2d9f7,
+    ink: 0x191026,
+    inkSoft: 0x5f5175,
+    inkMuted: 0xa89bc0,
+    dot: 0xc3b4dc,
+    iconInk: 0x655381,
+    locked: 0xe7dff6,
+    lockInk: 0xa294bd,
+    ambient: 0x9b5de5,
+  },
+];
+
+let activeChapter = 0;
+
+/**
+ * Re-skin the game for a chapter. Call this in a scene's `init()`, before
+ * anything has been drawn.
+ */
+export function applyChapterPalette(chapter: number): void {
+  activeChapter = Math.max(0, Math.min(CHAPTER_PALETTES.length - 1, chapter));
+  Object.assign(COLORS, BASE_COLORS, CHAPTER_PALETTES[activeChapter]);
+}
+
+export function currentChapterPalette(): number {
+  return activeChapter;
+}
 
 /** Widest a UI column ever gets, so wide canvases keep a readable measure. */
 export const COLUMN_MAX = 560;

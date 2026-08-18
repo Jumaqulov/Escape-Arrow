@@ -1,7 +1,7 @@
 /** Chapter picker + 5x10 level grid with star counts and locks. */
 import Phaser from 'phaser';
-import { COLORS, FONT, RADIUS, columnBounds, hex } from '../theme';
-import { IconButton, addTitle, drawCard, drawShadow, drawStar, iconBack, iconLock, setCenteredHitArea } from '../ui';
+import { COLORS, FONT, RADIUS, applyChapterPalette, columnBounds, hex } from '../theme';
+import { IconButton, addTitle, drawCard, drawShadow, drawStar, iconBack, iconLock, setCenteredHitArea, ambientBackdrop } from '../ui';
 import { progress } from '../progress';
 import { CHAPTERS, globalIndex } from '../levels';
 import { chapterName, t } from '../i18n';
@@ -24,10 +24,12 @@ export class LevelSelectScene extends Phaser.Scene {
     this.chapter = Math.min(Math.max(0, data?.chapter ?? this.lastPlayedChapter()), CHAPTERS.length - 1);
     this.tabs = [];
     this.currentGlobal = progress.resumeGlobal();
+    applyChapterPalette(this.chapter);
   }
 
   create(): void {
     this.cameras.main.setBackgroundColor(COLORS.bg);
+    ambientBackdrop(this, this.chapter + 4);
 
     new IconButton(this, {
       x: 58,
@@ -82,9 +84,8 @@ export class LevelSelectScene extends Phaser.Scene {
       setCenteredHitArea(container, tabWidth, 56);
       container.on('pointerup', () => {
         if (this.chapter === index) return;
-        this.chapter = index;
-        this.paintTabs(tabWidth);
-        this.renderGrid();
+        // A tab is a whole re-skin, so rebuild rather than repaint piecemeal.
+        this.scene.restart({ chapter: index });
       });
 
       this.tabs.push({ bg, text });

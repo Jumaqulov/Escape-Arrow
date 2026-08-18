@@ -218,6 +218,16 @@ export const iconMagnifier: IconDrawer = (g, s, color, lw) => {
   stroke(g, cx + r * k, cy + r * k, s * 0.44, s * 0.44, color, lw);
 };
 
+/** Tilted eraser block - the Eraser tool. */
+export const iconEraser: IconDrawer = (g, s, color, lw) => {
+  const w = s * 0.72;
+  const h = s * 0.46;
+  g.lineStyle(lw, color, 1);
+  g.strokeRoundedRect(-w / 2, -h / 2, w, h, s * 0.1);
+  g.lineBetween(w * 0.04, -h / 2, w * 0.04, h / 2);
+  g.setAngle(-32);
+};
+
 /** Curved arrow doubling back to the left. */
 export const iconUndo: IconDrawer = (g, s, color, lw) => {
   const r = s * 0.32;
@@ -268,6 +278,27 @@ export const iconGear: IconDrawer = (g, s, color, lw) => {
   }
 };
 
+function magnifierBody(g: Phaser.GameObjects.Graphics, s: number, color: number, lw: number): void {
+  const r = s * 0.28;
+  const cx = -s * 0.08;
+  const cy = -s * 0.08;
+  g.lineStyle(lw, color, 1);
+  g.strokeCircle(cx, cy, r);
+  const k = Math.SQRT1_2;
+  stroke(g, cx + r * k, cy + r * k, s * 0.42, s * 0.42, color, lw);
+}
+
+export const iconZoomIn: IconDrawer = (g, s, color, lw) => {
+  magnifierBody(g, s, color, lw);
+  stroke(g, -s * 0.22, -s * 0.08, s * 0.06, -s * 0.08, color, lw * 0.8);
+  stroke(g, -s * 0.08, -s * 0.22, -s * 0.08, s * 0.06, color, lw * 0.8);
+};
+
+export const iconZoomOut: IconDrawer = (g, s, color, lw) => {
+  magnifierBody(g, s, color, lw);
+  stroke(g, -s * 0.22, -s * 0.08, s * 0.06, -s * 0.08, color, lw * 0.8);
+};
+
 export const iconBack: IconDrawer = (g, s, color, lw) => {
   stroke(g, s * 0.17, -s * 0.26, -s * 0.15, 0, color, lw);
   stroke(g, -s * 0.15, 0, s * 0.17, s * 0.26, color, lw);
@@ -281,6 +312,35 @@ export const iconLock: IconDrawer = (g, s, color, lw) => {
   g.fillStyle(color, 1);
   g.fillRoundedRect(-s * 0.3, -s * 0.06, s * 0.6, s * 0.44, s * 0.1);
 };
+
+/** Hash / guideline-grid tool icon. */
+export const iconGrid: IconDrawer = (g, s, color, lw) => {
+  const a = s * 0.34;
+  const b = s * 0.14;
+  stroke(g, -b, -a, -b, a, color, lw);
+  stroke(g, b, -a, b, a, color, lw);
+  stroke(g, -a, -b, a, -b, color, lw);
+  stroke(g, -a, b, a, b, color, lw);
+};
+
+/** Gold coin with a rim, centred on (x,y). */
+export function drawCoin(g: Phaser.GameObjects.Graphics, x: number, y: number, radius: number): void {
+  g.fillStyle(0xd98c1a, 1);
+  g.fillCircle(x, y, radius);
+  g.fillStyle(COLORS.amber, 1);
+  g.fillCircle(x, y, radius * 0.82);
+  g.fillStyle(0xffd97a, 1);
+  g.fillCircle(x - radius * 0.22, y - radius * 0.24, radius * 0.3);
+}
+
+/** Small clock face for the timer pill. */
+export function drawClock(g: Phaser.GameObjects.Graphics, x: number, y: number, radius: number, color: number): void {
+  const lw = Math.max(2, radius * 0.22);
+  g.lineStyle(lw, color, 1);
+  g.strokeCircle(x, y, radius);
+  stroke(g, x, y, x, y - radius * 0.55, color, lw);
+  stroke(g, x, y, x + radius * 0.42, y + radius * 0.2, color, lw);
+}
 
 /** Filled heart, centred on (0,0). */
 export function drawHeart(
@@ -635,7 +695,120 @@ export class IconButton extends Phaser.GameObjects.Container {
   }
 }
 
+// ---------------------------------------------------------------- backdrop
+
+/**
+ * A soft radial blob. Graphics cannot do gradients, so this stacks concentric
+ * circles - the same trick the card shadows use, inverted.
+ */
+function softBlob(g: Phaser.GameObjects.Graphics, radius: number, color: number, alpha: number): void {
+  // Many thin rings, spaced on a curve. Evenly spaced rings read as visible
+  // concentric bands; crowding them towards the rim hides the steps.
+  const rings = 26;
+  for (let i = rings; i >= 1; i--) {
+    const r = radius * Math.pow(i / rings, 0.72);
+    g.fillStyle(color, alpha / rings);
+    g.fillCircle(0, 0, r);
+  }
+}
+
+/**
+ * Slow drifting colour behind everything. It never crosses the board card, so
+ * it adds life to the margins without touching puzzle readability.
+ */
+export function ambientBackdrop(scene: Phaser.Scene, seed = 1): Phaser.GameObjects.Container {
+  const { width, height } = scene.cameras.main;
+  const layer = scene.add.container(0, 0).setDepth(-10);
+
+  for (let i = 0; i < 5; i++) {
+    const g = scene.add.graphics();
+    const radius = 150 + ((i * 53 + seed * 29) % 130);
+    softBlob(g, radius, COLORS.ambient, i % 2 === 0 ? 0.16 : 0.11);
+
+    const x = ((i * 191 + seed * 71) % (width + 200)) - 100;
+    const y = ((i * 421 + seed * 137) % (height + 200)) - 100;
+    g.setPosition(x, y);
+    layer.add(g);
+
+    scene.tweens.add({
+      targets: g,
+      x: x + (i % 2 === 0 ? 70 : -70),
+      y: y + (i % 3 === 0 ? -60 : 50),
+      duration: 9000 + i * 1900,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+  }
+
+  return layer;
+}
+
 // -------------------------------------------------------------------- feel
+
+/** Rising "x3" style callout. */
+export function popupLabel(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  text: string,
+  color: number,
+  size = 34,
+  layer?: Phaser.GameObjects.Container,
+): void {
+  const label = scene.add
+    .text(x, y, text, {
+      fontFamily: FONT,
+      fontSize: `${size}px`,
+      color: hex(color),
+      fontStyle: '800',
+    })
+    .setOrigin(0.5)
+    .setScale(0.4);
+  if (layer) layer.add(label);
+
+  scene.tweens.add({
+    targets: label,
+    scale: 1,
+    y: y - 44,
+    duration: 250,
+    ease: 'Back.easeOut',
+    onComplete: () => {
+      scene.tweens.add({
+        targets: label,
+        alpha: 0,
+        y: y - 82,
+        duration: 320,
+        onComplete: () => label.destroy(),
+      });
+    },
+  });
+}
+
+/** A single fading dot, used for the flight trail. */
+export function trailDot(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  radius: number,
+  color: number,
+  layer?: Phaser.GameObjects.Container,
+): void {
+  const dot = scene.add.graphics();
+  dot.fillStyle(color, 0.5);
+  dot.fillCircle(0, 0, radius);
+  dot.setPosition(x, y);
+  if (layer) layer.add(dot);
+
+  scene.tweens.add({
+    targets: dot,
+    alpha: 0,
+    scale: 0.2,
+    duration: 320,
+    ease: 'Quad.easeOut',
+    onComplete: () => dot.destroy(),
+  });
+}
 
 /** Expanding ring left behind where an arrow lifted off. */
 export function rippleRing(
@@ -697,6 +870,140 @@ export function confetti(
       onComplete: () => piece.destroy(),
     });
   }
+}
+
+/**
+ * Slowly turning golden rays behind a reward. Returns the Graphics so the
+ * caller can park it in its own layer.
+ */
+export function goldenBurst(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  radius = 320,
+  spokes = 16,
+): Phaser.GameObjects.Graphics {
+  const rays = scene.add.graphics();
+  for (let i = 0; i < spokes; i++) {
+    const a0 = (i / spokes) * Math.PI * 2;
+    rays.fillStyle(COLORS.amber, 0.2);
+    rays.beginPath();
+    rays.moveTo(0, 0);
+    rays.arc(0, 0, radius, a0, a0 + Math.PI / spokes, false);
+    rays.closePath();
+    rays.fillPath();
+  }
+  rays.setPosition(x, y);
+  scene.tweens.add({ targets: rays, angle: 360, duration: 26000, repeat: -1 });
+  return rays;
+}
+
+/** Big grinning face, the celebration mascot. */
+export function drawHappyFace(g: Phaser.GameObjects.Graphics, x: number, y: number, size: number): void {
+  const r = size / 2;
+  g.fillStyle(0xe8a723, 1);
+  g.fillCircle(x, y, r);
+  g.fillStyle(0xffd046, 1);
+  g.fillCircle(x, y - r * 0.04, r * 0.94);
+
+  // Closed, happy eyes.
+  g.lineStyle(Math.max(3, r * 0.1), 0x2a1d05, 1);
+  for (const side of [-1, 1]) {
+    g.beginPath();
+    g.arc(x + side * r * 0.36, y - r * 0.18, r * 0.2, Math.PI * 1.15, Math.PI * 1.85, false);
+    g.strokePath();
+  }
+
+  // Open mouth with a tongue.
+  g.fillStyle(0x2a1d05, 1);
+  g.beginPath();
+  g.arc(x, y + r * 0.12, r * 0.46, 0, Math.PI, false);
+  g.closePath();
+  g.fillPath();
+  g.fillStyle(0xf4526b, 1);
+  g.beginPath();
+  g.arc(x, y + r * 0.42, r * 0.22, 0, Math.PI, false);
+  g.closePath();
+  g.fillPath();
+}
+
+/** Full-screen scrim plus a white card, the shell every modal shares. */
+export function modalShell(
+  scene: Phaser.Scene,
+  cardWidth: number,
+  cardHeight: number,
+  depth = 200,
+): { layer: Phaser.GameObjects.Container; centreX: number; centreY: number } {
+  const { width, height } = scene.cameras.main;
+  const layer = scene.add.container(0, 0).setDepth(depth);
+
+  const dim = scene.add.rectangle(width / 2, height / 2, width, height, COLORS.ink, 0.55);
+  dim.setInteractive();
+  layer.add(dim);
+
+  const card = scene.add.graphics();
+  drawCard(card, (width - cardWidth) / 2, (height - cardHeight) / 2, cardWidth, cardHeight, RADIUS.card);
+  layer.add(card);
+
+  layer.setScale(0.9);
+  layer.setAlpha(0);
+  scene.tweens.add({ targets: layer, scale: 1, alpha: 1, duration: 220, ease: 'Back.easeOut' });
+
+  return { layer, centreX: width / 2, centreY: height / 2 };
+}
+
+/**
+ * Draggable value slider. Returns the container so a modal can own it; the
+ * caller gets every change through `onChange` in the 0..1 range.
+ */
+export function slider(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  width: number,
+  value: number,
+  onChange: (value: number) => void,
+): Phaser.GameObjects.Container {
+  const layer = scene.add.container(x, y);
+  const half = width / 2;
+  const bar = scene.add.graphics();
+  const knob = scene.add.graphics();
+  layer.add(bar);
+  layer.add(knob);
+
+  let current = Phaser.Math.Clamp(value, 0, 1);
+
+  const redraw = (): void => {
+    bar.clear();
+    bar.fillStyle(COLORS.locked, 1);
+    bar.fillRoundedRect(-half, -6, width, 12, 6);
+    bar.fillStyle(COLORS.accent, 1);
+    bar.fillRoundedRect(-half, -6, Math.max(12, width * current), 12, 6);
+
+    knob.clear();
+    drawShadow(knob, -half + width * current - 15, -15, 30, 30, 15, 4, 2);
+    knob.fillStyle(COLORS.card, 1);
+    knob.fillCircle(-half + width * current, 0, 15);
+    knob.lineStyle(3, COLORS.accent, 1);
+    knob.strokeCircle(-half + width * current, 0, 15);
+  };
+  redraw();
+
+  // The whole strip is the target, so the knob never has to be hit exactly.
+  const zone = scene.add.zone(0, 0, width + 40, 52).setOrigin(0.5);
+  zone.setInteractive({ useHandCursor: true, draggable: true });
+  layer.add(zone);
+
+  const apply = (pointer: Phaser.Input.Pointer): void => {
+    const local = pointer.x - layer.x + half;
+    current = Phaser.Math.Clamp(local / width, 0, 1);
+    redraw();
+    onChange(current);
+  };
+  zone.on('pointerdown', apply);
+  zone.on('drag', (pointer: Phaser.Input.Pointer) => apply(pointer));
+
+  return layer;
 }
 
 /** Short lived message near the bottom of the screen. */

@@ -1,7 +1,7 @@
 /** Sound toggle + language picker. Changing language restarts the scene. */
 import Phaser from 'phaser';
 import { COLORS, FONT, RADIUS, columnBounds, hex } from '../theme';
-import { Button, IconButton, addTitle, drawCard, iconBack } from '../ui';
+import { Button, IconButton, addTitle, drawCard, iconBack, ambientBackdrop } from '../ui';
 import { progress } from '../progress';
 import { setSoundEnabled, playSound } from '../audio';
 import { LANGS, LANG_NAMES, getLang, t } from '../i18n';
@@ -15,6 +15,7 @@ export class SettingsScene extends Phaser.Scene {
   create(): void {
     const { width, height } = this.cameras.main;
     this.cameras.main.setBackgroundColor(COLORS.bg);
+    ambientBackdrop(this, 7);
 
     new IconButton(this, {
       x: 58,

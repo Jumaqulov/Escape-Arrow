@@ -4,6 +4,11 @@
  * Deterministic: the same BASE_SEED always produces the same 150 levels, so
  * regenerating never silently reshuffles a player's saved progress.
  *
+ * The ramp is deliberately steep. A sparse board with six arrows is solved on
+ * sight, which is exactly why players bounce; the interesting puzzle only
+ * starts once the board is crowded enough that you have to hunt for the one
+ * arrow whose lane is clear.
+ *
  *   npx tsx scripts/generate-levels.ts
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -24,20 +29,43 @@ const PER_CHAPTER = 50;
 
 interface ChapterSpec {
   name: string;
-  size: number;
-  minArrows: number;
-  maxArrows: number;
-  /** Tail length in cells behind each head. */
+  /** Grid at the first and last level of the chapter. */
+  from: { w: number; h: number; arrows: number };
+  to: { w: number; h: number; arrows: number };
   minTail: number;
   maxTail: number;
-  /** Hard ceiling on how many arrows may be tappable on the fresh board. */
-  maxInitialFree: number;
+  /** Warnsdorff pays off once the board is big and crowded. */
+  walk: 'random' | 'open';
 }
 
+/** Level 1 is the one deliberately tiny board, for the tap tutorial. */
+const OPENER = { w: 8, h: 10, arrows: 5 };
+
 const CHAPTERS: ChapterSpec[] = [
-  { name: 'Chapter 1', size: 6, minArrows: 4, maxArrows: 5, minTail: 1, maxTail: 2, maxInitialFree: 3 },
-  { name: 'Chapter 2', size: 7, minArrows: 5, maxArrows: 7, minTail: 2, maxTail: 4, maxInitialFree: 3 },
-  { name: 'Chapter 3', size: 8, minArrows: 6, maxArrows: 8, minTail: 3, maxTail: 5, maxInitialFree: 4 },
+  {
+    name: 'Chapter 1',
+    from: { w: 11, h: 14, arrows: 18 },
+    to: { w: 14, h: 17, arrows: 46 },
+    minTail: 1,
+    maxTail: 3,
+    walk: 'random',
+  },
+  {
+    name: 'Chapter 2',
+    from: { w: 14, h: 17, arrows: 44 },
+    to: { w: 17, h: 21, arrows: 70 },
+    minTail: 1,
+    maxTail: 4,
+    walk: 'random',
+  },
+  {
+    name: 'Chapter 3',
+    from: { w: 18, h: 22, arrows: 74 },
+    to: { w: 20, h: 26, arrows: 104 },
+    minTail: 1,
+    maxTail: 4,
+    walk: 'open',
+  },
 ];
 
 function lerpInt(a: number, b: number, t: number): number {
@@ -60,57 +88,74 @@ const seenBoards = new Set<string>();
 let globalId = 1;
 let seedCursor = BASE_SEED;
 let rejectedDuplicates = 0;
+let shortfall = 0;
+
+const started = Date.now();
 
 for (let c = 0; c < CHAPTERS.length; c++) {
   const spec = CHAPTERS[c]!;
   const chapter: Chapter = { name: spec.name, levels: [] };
 
   for (let i = 0; i < PER_CHAPTER; i++) {
-    const t = PER_CHAPTER > 1 ? i / (PER_CHAPTER - 1) : 0;
-    const count = lerpInt(spec.minArrows, spec.maxArrows, t);
-    // Ramp the opening choice down: later levels give the player fewer
-    // obviously-tappable arrows, which is what actually makes them think.
-    const targetFree = Math.max(1, lerpInt(spec.maxInitialFree, 1, t));
+    const linear = PER_CHAPTER > 1 ? i / (PER_CHAPTER - 1) : 0;
+    // Front-loaded curve: the board should get busy within a couple of levels,
+    // not thirty. Only level 1 is allowed to be a five-arrow tutorial.
+    const t = Math.pow(linear, 0.45);
+    const opener = c === 0 && i === 0;
+
+    const w = opener ? OPENER.w : lerpInt(spec.from.w, spec.to.w, t);
+    const h = opener ? OPENER.h : lerpInt(spec.from.h, spec.to.h, t);
+    const wanted = opener ? OPENER.arrows : lerpInt(spec.from.arrows, spec.to.arrows, t);
 
     let level: LevelData | null = null;
+    let best: LevelData | null = null;
+    let bestCount = 0;
 
-    // Relaxation ladder: tighten first, loosen only if the seed space is dry.
-    outer: for (let relax = 0; relax + targetFree <= spec.maxInitialFree + 1; relax++) {
-      const cap = Math.min(spec.maxInitialFree, targetFree + relax);
-      for (let attempt = 0; attempt < 220; attempt++) {
-        seedCursor += 7919;
-        const board = generateLevel({
-          w: spec.size,
-          h: spec.size,
-          count,
-          seed: seedCursor,
-          minTail: spec.minTail,
-          maxTail: spec.maxTail,
-          maxInitialFree: cap,
-          minInitialFree: 1,
-          attempts: 40,
-          tangle: 0.9,
-        });
-        if (!board) continue;
-        // Retry on failure, exactly as required: never emit an invalid level.
-        if (!validate(board)) continue;
+    // The builder stops when the board genuinely runs out of legal placements,
+    // so accept the densest board it managed rather than looping forever.
+    for (let attempt = 0; attempt < 26 && !level; attempt++) {
+      seedCursor += 7919;
+      const board = generateLevel({
+        w,
+        h,
+        count: wanted,
+        // A board that runs out of legal placements early is still a good
+        // board - take it rather than looping forever chasing an exact count.
+        minCount: Math.round(wanted * 0.72),
+        seed: seedCursor,
+        minTail: spec.minTail,
+        maxTail: spec.maxTail,
+        minInitialFree: 1,
+        attempts: 2,
+        tangle: 0.9,
+        walk: spec.walk,
+      });
+      if (!board || !validate(board)) continue;
 
-        const candidate = serializeLevel(board, globalId);
-        const signature = signatureOf(candidate);
-        if (seenBoards.has(signature)) {
-          rejectedDuplicates++;
-          continue;
-        }
+      const candidate = serializeLevel(board, globalId);
+      const signature = signatureOf(candidate);
+      if (seenBoards.has(signature)) {
+        rejectedDuplicates++;
+        continue;
+      }
+
+      if (board.arrows.length >= wanted) {
         seenBoards.add(signature);
         level = candidate;
-        break outer;
+      } else if (board.arrows.length > bestCount) {
+        bestCount = board.arrows.length;
+        best = candidate;
       }
     }
 
+    if (!level && best) {
+      seenBoards.add(signatureOf(best));
+      level = best;
+      shortfall++;
+    }
+
     if (!level) {
-      throw new Error(
-        `Could not generate ${spec.name} level ${i + 1} (${spec.size}x${spec.size}, ${count} arrows, tail ${spec.minTail}-${spec.maxTail})`,
-      );
+      throw new Error(`Could not generate ${spec.name} level ${i + 1} (${w}x${h}, ${wanted} arrows)`);
     }
 
     chapter.levels.push(level);
@@ -127,13 +172,14 @@ const all = pack.chapters.flatMap((ch) => ch.levels);
 const stats = all.map((lvl) => analyze(parseLevel(lvl)));
 
 const avg = (nums: number[]): string =>
-  (nums.reduce((a, b) => a + b, 0) / Math.max(1, nums.length)).toFixed(2);
+  (nums.reduce((a, b) => a + b, 0) / Math.max(1, nums.length)).toFixed(1);
 
-console.log(`Wrote ${all.length} levels to ${OUT}`);
+console.log(`Wrote ${all.length} levels to ${OUT}  (${((Date.now() - started) / 1000).toFixed(1)}s)`);
 console.log(`  format version:  ${PACK_VERSION}`);
-console.log(`  chapters:        ${pack.chapters.map((c) => `${c.name} (${c.levels.length})`).join(', ')}`);
 console.log(`  all solvable:    ${stats.every((s) => s.solvable) ? 'yes' : 'NO'}`);
-console.log(`  avg difficulty:  ${avg(stats.map((s) => s.difficulty))}`);
+console.log(`  arrows:          ${stats[0]!.arrows} (level 1) -> ${stats[stats.length - 1]!.arrows} (level 150)`);
+console.log(`  avg arrows:      ${avg(stats.map((s) => s.arrows))}`);
+console.log(`  avg density:     ${avg(stats.map((s) => s.density * 100))}%`);
 console.log(`  avg initialFree: ${avg(stats.map((s) => s.initialFree))}`);
-console.log(`  avg cells used:  ${avg(stats.map((s) => s.cells))}`);
 console.log(`  duplicates skipped: ${rejectedDuplicates}`);
+console.log(`  levels below target count: ${shortfall}`);

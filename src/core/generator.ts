@@ -37,8 +37,10 @@ export interface GenerateOptions {
   w: number;
   /** Grid height in cells. */
   h: number;
-  /** How many arrows to place. */
+  /** How many arrows to aim for. */
   count: number;
+  /** Fewest arrows worth keeping. Defaults to  (exact). */
+  minCount?: number;
   /** PRNG seed - the whole level is a pure function of this. */
   seed: number;
   /** Shortest tail, in cells behind the head. */
@@ -53,6 +55,12 @@ export interface GenerateOptions {
   attempts?: number;
   /** 0..1 - how strongly to prefer placements that block existing arrows. */
   tangle?: number;
+  /**
+   * Tail walk strategy. "open" is Warnsdorff's rule - always step into the
+   * cell that keeps the most exits free. It reaches far higher densities on
+   * big boards; on small ones plain randomness packs better.
+   */
+  walk?: 'random' | 'open';
 }
 
 interface HeadCandidate {
@@ -101,6 +109,7 @@ function choose<T extends { score: number }>(items: T[], rnd: () => number, tang
 function buildOnce(opts: GenerateOptions, rnd: () => number): Board | null {
   const { w, h, count, minTail, maxTail } = opts;
   const tangle = opts.tangle ?? 0.85;
+  const walk = opts.walk ?? 'random';
 
   const board: Board = { w, h, arrows: [] };
   const occupied = new Set<number>();
@@ -126,7 +135,8 @@ function buildOnce(opts: GenerateOptions, rnd: () => number): Board | null {
         }
       }
     }
-    if (heads.length === 0) return null;
+    // Out of legal placements: the board is as full as this rule set allows.
+    if (heads.length === 0) break;
 
     const head = choose(heads, rnd, tangle);
     const ownRay = new Set(rayFrom(head.x, head.y, head.dir, w, h).map((c) => cellKey(c.x, c.y, w)));
@@ -142,6 +152,18 @@ function buildOnce(opts: GenerateOptions, rnd: () => number): Board | null {
     let cursor: Cell = neck;
 
     // ---- 3. the rest of the tail ----------------------------------------
+    const freeAround = (c: Cell): number => {
+      let n = 0;
+      for (const dir of DIRS) {
+        const nx = c.x + DX[dir];
+        const ny = c.y + DY[dir];
+        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+        const key = cellKey(nx, ny, w);
+        if (!occupied.has(key) && !own.has(key) && !ownRay.has(key)) n++;
+      }
+      return n;
+    };
+
     for (let step = 1; step < target; step++) {
       const options: Array<Cell & { score: number }> = [];
       for (const dir of DIRS) {
@@ -151,18 +173,27 @@ function buildOnce(opts: GenerateOptions, rnd: () => number): Board | null {
         const key = cellKey(nx, ny, w);
         // EMPTY cells only, never our own body, never our own escape ray.
         if (occupied.has(key) || own.has(key) || ownRay.has(key)) continue;
-        options.push({ x: nx, y: ny, score: pressure.get(key) ?? 0 });
+        // Warnsdorff: score by how many exits the step leaves open, so the
+        // walk does not paint itself into a corner on a crowded board.
+        options.push({
+          x: nx,
+          y: ny,
+          score: walk === 'open' ? freeAround({ x: nx, y: ny }) : (pressure.get(key) ?? 0),
+        });
       }
-      // A tail that cannot reach its target length would break the chapter
-      // budget, so throw the whole board away and let the caller retry.
-      if (options.length === 0) return null;
+      // Boxed in. Keep whatever we have rather than throwing the board away -
+      // this single change roughly doubles the density the builder can reach.
+      if (options.length === 0) break;
 
-      const next = choose(options, rnd, tangle);
+      const next = choose(options, rnd, walk === 'open' ? 1 : tangle);
       const cell: Cell = { x: next.x, y: next.y };
       tail.push(cell);
       own.add(cellKey(cell.x, cell.y, w));
       cursor = cell;
     }
+
+    // A stub shorter than the floor is not worth keeping.
+    if (tail.length < minTail) return null;
 
     board.arrows.push({
       id: placed + 1,
@@ -194,7 +225,7 @@ export function generateLevel(opts: GenerateOptions): Board | null {
   for (let attempt = 0; attempt < attempts; attempt++) {
     const board = buildOnce(opts, rnd);
     if (!board) continue;
-    if (board.arrows.length !== opts.count) continue;
+    if (board.arrows.length < (opts.minCount ?? opts.count)) continue;
 
     const stats = analyze(board);
     if (!stats.solvable) continue;

@@ -19,8 +19,18 @@ export interface SaveData {
   lang: string;
   /** Levels completed, counting replays - drives the interstitial cadence. */
   played: number;
-  /** Has the player been shown the level 1 tap tutorial? */
+  /** Has the player been shown the opening tap tutorial? */
   tutorialDone: boolean;
+  /** Soft currency, earned per level and spent on tool charges. */
+  coins: number;
+  /** Remaining charges per tool. */
+  tools: { hint: number; eraser: number; grid: number };
+  /** Tools the player has been introduced to, by unlock ceremony. */
+  seenTools: string[];
+  /** Pan speed multiplier, 0.5 (slow) to 2 (fast). */
+  dragSensitivity: number;
+  /** Has the zoom coach mark been shown once? */
+  seenZoomHint: boolean;
 }
 
 export type Platform = 'yandex' | 'crazygames' | 'stub';
@@ -56,10 +66,23 @@ export interface ISdk {
   vibrate(pattern: number | number[]): void;
 }
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 4;
 
 export function defaultSave(): SaveData {
-  return { v: SAVE_VERSION, stars: {}, unlocked: 1, sound: true, lang: 'en', played: 0, tutorialDone: false };
+  return {
+    v: SAVE_VERSION,
+    stars: {},
+    unlocked: 1,
+    sound: true,
+    lang: 'en',
+    played: 0,
+    tutorialDone: false,
+    coins: 0,
+    tools: { hint: 0, eraser: 0, grid: 0 },
+    seenTools: [],
+    dragSensitivity: 1,
+    seenZoomHint: false,
+  };
 }
 
 const STUB_KEY = 'arrow-escape-save';
