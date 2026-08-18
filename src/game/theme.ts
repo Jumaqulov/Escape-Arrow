@@ -30,6 +30,8 @@ const BASE_COLORS = {
   pink: 0xf04a86,
   /** Blocked feedback, heart loss. */
   danger: 0xe5484d,
+  /** Affirmative feedback: the hold-preview saying "this one can leave". */
+  ok: 0x14a06d,
   /** Stars. */
   amber: 0xf5a524,
   /** Board dot grid. */
@@ -127,6 +129,28 @@ export const RADIUS = {
 
 /** Clockwise rotation applied to an up-pointing glyph. */
 export const DIR_ANGLES: Readonly<Record<Dir, number>> = { U: 0, R: 90, D: 180, L: 270 };
+
+/**
+ * Resting ink, one colour per direction. Reading a 90-arrow board a glyph at a
+ * time is the slow part of the puzzle, and hue is scanned far faster than the
+ * rotation of a dart - so direction gets a colour instead of only a shape.
+ *
+ * All four are ink weight: deep, desaturated and matched to within a few
+ * points of the same relative luminance, so no direction shouts over the
+ * others and a packed board still reads as line art on pale paper rather than
+ * as a bag of primaries. Feedback colours stay bright on purpose (`danger`,
+ * `ok`, `accent`), which is what keeps them separable from the ink.
+ */
+export const DIR_INK: Readonly<Record<Dir, number>> = {
+  /** Deep navy. */
+  U: 0x21477a,
+  /** Deep brick red. */
+  R: 0x8a3128,
+  /** Deep forest green. */
+  D: 0x1f5138,
+  /** Dark amber. */
+  L: 0x6b4410,
+};
 
 /**
  * System rounded stack - nothing is fetched. Nunito and Arial Rounded MT Bold

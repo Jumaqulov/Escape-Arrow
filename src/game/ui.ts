@@ -10,7 +10,7 @@
  */
 import Phaser from 'phaser';
 import type { Cell, Dir } from '../core/types';
-import { COLORS, FONT, RADIUS, SHADOW_ALPHA, darken, hex } from './theme';
+import { COLORS, FONT, RADIUS, SHADOW_ALPHA, darken, hex, mix } from './theme';
 
 /**
  * Give a Container a centred, pointer-friendly hit area.
@@ -63,6 +63,28 @@ export function drawCard(
   if (shadow) drawShadow(g, x, y, width, height, radius);
   g.fillStyle(fill, 1);
   g.fillRoundedRect(x, y, width, height, radius);
+}
+
+/**
+ * The pale inset a modal row sits in.
+ *
+ * A wash of the *live* chapter accent over card white plus a hairline of the
+ * same hue, so a settings row in chapter 3 is lilac rather than the flat
+ * grey-blue well it replaces. Two ink-free layers means it recedes behind its
+ * contents instead of boxing them in.
+ */
+export function drawSoftPanel(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius = RADIUS.card,
+): void {
+  g.fillStyle(mix(COLORS.card, COLORS.accent, 0.07), 1);
+  g.fillRoundedRect(x, y, width, height, radius);
+  g.lineStyle(2, mix(COLORS.card, COLORS.accent, 0.22), 1);
+  g.strokeRoundedRect(x, y, width, height, radius);
 }
 
 /** The board's dot grid: one dot at every cell corner. */
@@ -159,6 +181,30 @@ export function drawPolyArrow(
 
   const dart = arrowHeadPoints(head.x, head.y, dir, cell);
   g.fillTriangle(dart.tip.x, dart.tip.y, dart.left.x, dart.left.y, dart.right.x, dart.right.y);
+}
+
+/**
+ * Halo for an arrow. Draw it *before* the arrow itself - it is the same shape
+ * re-stroked ever wider at ~10% alpha, so the arrow has to land on top or the
+ * washed-out copies would grey it out.
+ *
+ * Graphics cannot blur, so the softness comes entirely from the stack: widest
+ * layer first, each one narrower and sitting on the previous, which builds the
+ * falloff the same way `drawShadow` does for cards.
+ */
+export function drawPolyArrowGlow(
+  g: Phaser.GameObjects.Graphics,
+  points: Cell[],
+  lineWidth: number,
+  color: number,
+  dir: Dir,
+  cell: number,
+  layers = 3,
+): void {
+  // Widest first: later, thinner passes stack their alpha on top of it.
+  for (let i = layers - 1; i >= 0; i--) {
+    drawPolyArrow(g, points, lineWidth + i * 6, color, dir, cell, 0.1);
+  }
 }
 
 // ------------------------------------------------------------------- icons
@@ -323,6 +369,18 @@ export const iconGrid: IconDrawer = (g, s, color, lw) => {
   stroke(g, -a, b, a, b, color, lw);
 };
 
+/**
+ * Dismiss glyph: two crossed strokes, round-capped by hand like every other
+ * line in the game. Never the letter X - a glyph drawn from the same
+ * vocabulary as the arrows reads as part of this game, a capital X reads as a
+ * system dialog.
+ */
+export const iconClose: IconDrawer = (g, s, color, lw) => {
+  const a = s * 0.27;
+  stroke(g, -a, -a, a, a, color, lw);
+  stroke(g, a, -a, -a, a, color, lw);
+};
+
 /** Gold coin with a rim, centred on (x,y). */
 export function drawCoin(g: Phaser.GameObjects.Graphics, x: number, y: number, radius: number): void {
   g.fillStyle(0xd98c1a, 1);
@@ -331,6 +389,48 @@ export function drawCoin(g: Phaser.GameObjects.Graphics, x: number, y: number, r
   g.fillCircle(x, y, radius * 0.82);
   g.fillStyle(0xffd97a, 1);
   g.fillCircle(x - radius * 0.22, y - radius * 0.24, radius * 0.3);
+}
+
+/**
+ * Read-only coin balance pill, laid out from its LEFT edge at local x = 0 and
+ * vertically centred on y. Its width depends on how many digits the player has
+ * banked, so left-anchoring is the only way a caller can pin it to a card edge
+ * without guessing; `container.width` carries the measured size back for
+ * callers that want to centre it instead.
+ */
+export function coinChip(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  amount: number,
+  height = 40,
+): Phaser.GameObjects.Container {
+  const layer = scene.add.container(x, y);
+
+  const text = scene.add
+    .text(0, 0, String(amount), {
+      fontFamily: FONT,
+      fontSize: `${Math.round(height * 0.45)}px`,
+      color: hex(COLORS.inkSoft),
+      fontStyle: 'bold',
+    })
+    .setOrigin(0, 0.5);
+
+  const coinR = height * 0.28;
+  const pad = height * 0.3;
+  const gap = 9;
+  const width = pad * 2 + coinR * 2 + gap + text.width;
+
+  const g = scene.add.graphics();
+  g.fillStyle(mix(COLORS.card, COLORS.amber, 0.18), 1);
+  g.fillRoundedRect(0, -height / 2, width, height, height / 2);
+  drawCoin(g, pad + coinR, 0, coinR);
+  text.setX(pad + coinR * 2 + gap);
+
+  layer.add(g);
+  layer.add(text);
+  layer.setSize(width, height);
+  return layer;
 }
 
 /** Small clock face for the timer pill. */
@@ -403,6 +503,74 @@ export function drawStar(
   }
 }
 
+/**
+ * Stop-sign octagon with a bold X, centred on (x,y). `size` is the width of
+ * the sign across the flats-to-flats box, so it drops straight into a slot
+ * sized like any other icon.
+ *
+ * The X is cut in the card colour rather than a darker tint: on the amber and
+ * pink fills this mark gets used with, white is the only bar that stays
+ * legible at HUD size.
+ */
+export function drawStopMark(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  size: number,
+  color: number,
+): void {
+  const r = size / 2;
+  const points: Phaser.Geom.Point[] = [];
+  // Rotate the 8 vertices by half a step so the sign rests on a flat edge.
+  for (let i = 0; i < 8; i++) {
+    const a = (i * Math.PI) / 4 + Math.PI / 8;
+    points.push(new Phaser.Geom.Point(x + Math.cos(a) * r, y + Math.sin(a) * r));
+  }
+  g.fillStyle(color, 1);
+  g.fillPoints(points, true);
+
+  const arm = r * 0.42;
+  const lw = Math.max(2, r * 0.22);
+  stroke(g, x - arm, y - arm, x + arm, y + arm, COLORS.card, lw);
+  stroke(g, x + arm, y - arm, x - arm, y + arm, COLORS.card, lw);
+}
+
+/**
+ * Circular countdown: a full-circle track with `fraction` of it covered by a
+ * heavier arc, starting at 12 o'clock and sweeping clockwise.
+ *
+ * Screen y grows downwards, so "clockwise" is the direction of *increasing*
+ * angle - hence anticlockwise=false with -90 degrees as the start.
+ */
+export function drawTimerArc(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  radius: number,
+  fraction: number,
+  color: number,
+  trackColor: number,
+): void {
+  const lw = Math.max(2, radius * 0.22);
+  const t = Phaser.Math.Clamp(fraction, 0, 1);
+
+  g.lineStyle(lw, trackColor, 1);
+  g.strokeCircle(x, y, radius);
+  if (t <= 0) return;
+
+  const start = -Math.PI / 2;
+  const end = start + t * Math.PI * 2;
+  g.lineStyle(lw, color, 1);
+  g.beginPath();
+  g.arc(x, y, radius, start, end, false);
+  g.strokePath();
+
+  // Graphics has no line caps, so both ends get their own disc.
+  g.fillStyle(color, 1);
+  g.fillCircle(x + Math.cos(start) * radius, y + Math.sin(start) * radius, lw / 2);
+  g.fillCircle(x + Math.cos(end) * radius, y + Math.sin(end) * radius, lw / 2);
+}
+
 // ----------------------------------------------------------------- buttons
 
 export type ButtonVariant = 'primary' | 'plain' | 'soft';
@@ -441,6 +609,8 @@ export class Button extends Phaser.GameObjects.Container {
   private hovered = false;
   private pressed = false;
   private enabled: boolean;
+  /** The release spring, kept so the next press can cancel it. */
+  private scaleTween: Phaser.Tweens.Tween | null = null;
 
   constructor(scene: Phaser.Scene, options: ButtonOptions) {
     super(scene, options.x, options.y);
@@ -487,16 +657,46 @@ export class Button extends Phaser.GameObjects.Container {
       if (!this.enabled || !wasPressed) return;
       this.opts.onClick();
     });
+    // A click that tears the button down (modal close) leaves the spring in
+    // flight, still writing scale into a dead Container.
+    this.once('destroy', () => this.scaleTween?.remove());
 
     this.redraw();
     this.setBadge(options.badge);
     scene.add.existing(this);
   }
 
+  /**
+   * Press snaps, release springs.
+   *
+   * The press has to be instant or the button feels laggy under the finger;
+   * the release gets `Back.easeOut` so it overshoots 1 slightly on the way
+   * home. The in-flight tween is removed first, otherwise a rapid click would
+   * leave two tweens fighting over `scale` and the button would settle wherever
+   * the loser stopped writing.
+   */
   private setPressed(value: boolean): void {
     this.pressed = value;
-    this.setScale(value ? 0.9 : 1);
     this.redraw();
+
+    this.scaleTween?.remove();
+    if (value) {
+      this.scaleTween = null;
+      this.setScale(0.9);
+      return;
+    }
+    // pointerout fires on plain hover-out too - do not spring what never moved.
+    if (!this.scaleTween && this.scaleX === 1) return;
+
+    this.scaleTween = this.scene.tweens.add({
+      targets: this,
+      scale: 1,
+      duration: 220,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        this.scaleTween = null;
+      },
+    });
   }
 
   setEnabled(enabled: boolean): this {
@@ -588,6 +788,8 @@ export class IconButton extends Phaser.GameObjects.Container {
   };
   private pressed = false;
   private enabled: boolean;
+  /** The release spring, kept so the next press can cancel it. */
+  private scaleTween: Phaser.Tweens.Tween | null = null;
 
   constructor(scene: Phaser.Scene, options: IconButtonOptions) {
     super(scene, options.x, options.y);
@@ -638,16 +840,35 @@ export class IconButton extends Phaser.GameObjects.Container {
       if (!this.enabled || !wasPressed) return;
       this.opts.onClick();
     });
+    this.once('destroy', () => this.scaleTween?.remove());
 
     this.redraw();
     this.setBadge(options.badge);
     scene.add.existing(this);
   }
 
+  /** Same press-snap / release-spring as `Button` - see the note there. */
   private setPressed(value: boolean): void {
     this.pressed = value;
-    this.setScale(value ? 0.9 : 1);
     this.redraw();
+
+    this.scaleTween?.remove();
+    if (value) {
+      this.scaleTween = null;
+      this.setScale(0.9);
+      return;
+    }
+    if (!this.scaleTween && this.scaleX === 1) return;
+
+    this.scaleTween = this.scene.tweens.add({
+      targets: this,
+      scale: 1,
+      duration: 220,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        this.scaleTween = null;
+      },
+    });
   }
 
   setEnabled(enabled: boolean): this {
@@ -695,21 +916,210 @@ export class IconButton extends Phaser.GameObjects.Container {
   }
 }
 
+export interface CoinButtonOptions {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** What the thing costs. */
+  price: number;
+  /** What the player actually has, so the gap can be spelled out. */
+  balance: number;
+  onClick: () => void;
+  fontSize?: number;
+}
+
+/**
+ * A price, paid in coins.
+ *
+ * Affordability has to be readable in one glance, and the old `soft` variant
+ * failed that badly: a pale accent pill reads as *disabled* whether or not the
+ * player can actually pay. So the two states are now built differently rather
+ * than tinted differently.
+ *
+ * - Affordable: a gold pill with its own shadow, border and press spring. It
+ *   looks like every other live button in the game.
+ * - Unaffordable: the pill drops to the locked grey at half alpha and grows a
+ *   pink pill underneath carrying the exact shortfall, at full strength. The
+ *   number is the message, so it needs no string and no translation.
+ */
+export class CoinButton extends Phaser.GameObjects.Container {
+  private readonly bg: Phaser.GameObjects.Graphics;
+  private readonly face: Phaser.GameObjects.Graphics;
+  private readonly label: Phaser.GameObjects.Text;
+  private readonly opts: Required<CoinButtonOptions>;
+  private readonly affordable: boolean;
+  private hovered = false;
+  private pressed = false;
+  private scaleTween: Phaser.Tweens.Tween | null = null;
+
+  constructor(scene: Phaser.Scene, options: CoinButtonOptions) {
+    super(scene, options.x, options.y);
+    this.opts = { fontSize: 28, ...options };
+    this.affordable = options.balance >= options.price;
+
+    this.bg = scene.add.graphics();
+    this.add(this.bg);
+
+    this.face = scene.add.graphics();
+    this.add(this.face);
+
+    this.label = scene.add
+      .text(0, 0, String(options.price), {
+        fontFamily: FONT,
+        fontSize: `${this.opts.fontSize}px`,
+        color: hex(COLORS.ink),
+        fontStyle: '800',
+      })
+      .setOrigin(0, 0.5);
+    this.add(this.label);
+
+    // Coin and number travel together as one centred pair, so the glyph never
+    // drifts away from a 3- or 4-digit price the way a fixed offset would.
+    const coinR = Math.round(this.opts.height * 0.2);
+    const gap = 10;
+    const total = coinR * 2 + gap + this.label.width;
+    drawCoin(this.face, -total / 2 + coinR, 0, coinR);
+    this.label.setX(-total / 2 + coinR * 2 + gap);
+
+    if (!this.affordable) this.addShortfall(scene, options.price - options.balance);
+
+    // An unaffordable price is not a button at all: no hit area, so no hand
+    // cursor and no press that goes nowhere.
+    if (this.affordable) {
+      setCenteredHitArea(this, this.opts.width, this.opts.height);
+      this.on('pointerover', () => {
+        this.hovered = true;
+        this.redraw();
+      });
+      this.on('pointerout', () => {
+        this.hovered = false;
+        this.setPressed(false);
+      });
+      this.on('pointerdown', () => this.setPressed(true));
+      this.on('pointerup', () => {
+        const wasPressed = this.pressed;
+        this.setPressed(false);
+        if (wasPressed) this.opts.onClick();
+      });
+    }
+    this.once('destroy', () => this.scaleTween?.remove());
+
+    this.redraw();
+    scene.add.existing(this);
+  }
+
+  /** The gap, in coins, as a pink pill tucked under the price. */
+  private addShortfall(scene: Phaser.Scene, missing: number): void {
+    const height = 30;
+    const pill = scene.add.container(0, this.opts.height / 2 + 25);
+
+    const text = scene.add
+      .text(0, 0, `-${missing}`, {
+        fontFamily: FONT,
+        fontSize: '17px',
+        color: hex(COLORS.card),
+        fontStyle: '800',
+      })
+      .setOrigin(0, 0.5);
+
+    const coinR = 9;
+    const pad = 13;
+    const gap = 8;
+    const width = pad * 2 + coinR * 2 + gap + text.width;
+
+    const g = scene.add.graphics();
+    g.fillStyle(COLORS.pink, 1);
+    g.fillRoundedRect(-width / 2, -height / 2, width, height, height / 2);
+    drawCoin(g, -width / 2 + pad + coinR, 0, coinR);
+    text.setX(-width / 2 + pad + coinR * 2 + gap);
+
+    pill.add(g);
+    pill.add(text);
+    this.add(pill);
+  }
+
+  /** Same press-snap / release-spring as `Button` - see the note there. */
+  private setPressed(value: boolean): void {
+    this.pressed = value;
+    this.redraw();
+
+    this.scaleTween?.remove();
+    if (value) {
+      this.scaleTween = null;
+      this.setScale(0.9);
+      return;
+    }
+    if (!this.scaleTween && this.scaleX === 1) return;
+
+    this.scaleTween = this.scene.tweens.add({
+      targets: this,
+      scale: 1,
+      duration: 220,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        this.scaleTween = null;
+      },
+    });
+  }
+
+  private redraw(): void {
+    const { width, height } = this.opts;
+    const radius = height / 2;
+
+    let wash = 0.22;
+    if (this.pressed) wash = 0.44;
+    else if (this.hovered) wash = 0.32;
+
+    const fill = this.affordable ? mix(COLORS.card, COLORS.amber, wash) : COLORS.locked;
+    const border = this.affordable ? COLORS.amber : COLORS.dot;
+
+    this.bg.clear();
+    if (this.affordable) drawShadow(this.bg, -width / 2, -height / 2, width, height, radius, 6, 3);
+    this.bg.fillStyle(fill, 1);
+    this.bg.fillRoundedRect(-width / 2, -height / 2, width, height, radius);
+    this.bg.lineStyle(3, border, 1);
+    this.bg.strokeRoundedRect(-width / 2, -height / 2, width, height, radius);
+
+    // Dim the parts, never the Container - the shortfall pill is a child and
+    // has to stay at full strength to do its job.
+    const alpha = this.affordable ? 1 : 0.5;
+    this.bg.setAlpha(alpha);
+    this.face.setAlpha(alpha);
+    this.label.setAlpha(alpha);
+    this.label.setColor(hex(this.affordable ? darken(COLORS.amber, 0.52) : COLORS.inkMuted));
+  }
+}
+
 // ---------------------------------------------------------------- backdrop
 
 /**
- * A soft radial blob. Graphics cannot do gradients, so this stacks concentric
- * circles - the same trick the card shadows use, inverted.
+ * A soft radial glow around (x,y). Graphics cannot do gradients, so this
+ * stacks concentric circles - the same trick the card shadows use, inverted.
+ *
+ * It is the drifting-backdrop blob and the halo behind a modal's hero art:
+ * one falloff, so nothing in the game glows in two different ways.
  */
-function softBlob(g: Phaser.GameObjects.Graphics, radius: number, color: number, alpha: number): void {
+export function softRadial(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  radius: number,
+  color: number,
+  alpha: number,
+  rings = 26,
+): void {
   // Many thin rings, spaced on a curve. Evenly spaced rings read as visible
   // concentric bands; crowding them towards the rim hides the steps.
-  const rings = 26;
   for (let i = rings; i >= 1; i--) {
     const r = radius * Math.pow(i / rings, 0.72);
     g.fillStyle(color, alpha / rings);
-    g.fillCircle(0, 0, r);
+    g.fillCircle(x, y, r);
   }
+}
+
+function softBlob(g: Phaser.GameObjects.Graphics, radius: number, color: number, alpha: number): void {
+  softRadial(g, 0, 0, radius, color, alpha);
 }
 
 /**
@@ -873,6 +1283,91 @@ export function confetti(
 }
 
 /**
+ * Confetti made of geometric shapes - triangles, discs and squares mixed - so
+ * a burst reads as a different event from the ribbon `confetti()` above.
+ *
+ * Same flight as the ribbons: outward on a jittered radial, dragged down by a
+ * constant 120px so the pieces fall rather than hang.
+ */
+export function burstShapes(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  count = 24,
+  colors?: number[],
+  layer?: Phaser.GameObjects.Container,
+): void {
+  // Read COLORS here, not at module load: the palette changes per chapter.
+  const palette = colors && colors.length > 0 ? colors : [COLORS.accent, COLORS.pink, COLORS.amber];
+
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+    const speed = 160 + Math.random() * 280;
+    const color = palette[i % palette.length]!;
+    const size = 8 + Math.random() * 9;
+    const half = size / 2;
+
+    const piece = scene.add.graphics();
+    piece.fillStyle(color, 1);
+    switch (i % 3) {
+      case 0:
+        // Equilateral-ish triangle, centred on its own bounding box.
+        piece.fillTriangle(0, -half, half, half, -half, half);
+        break;
+      case 1:
+        piece.fillCircle(0, 0, half);
+        break;
+      default:
+        piece.fillRoundedRect(-half, -half, size, size, size * 0.18);
+        break;
+    }
+    piece.setPosition(x, y);
+    piece.setAngle(Math.random() * 360);
+    if (layer) layer.add(piece);
+
+    scene.tweens.add({
+      targets: piece,
+      x: x + Math.cos(angle) * speed,
+      y: y + Math.sin(angle) * speed + 120,
+      angle: piece.angle + (Math.random() * 480 - 240),
+      alpha: 0,
+      duration: 680 + Math.random() * 420,
+      ease: 'Quad.easeOut',
+      onComplete: () => piece.destroy(),
+    });
+  }
+}
+
+/**
+ * Pointer cursor for a tool mode. The caller owns the position - move the
+ * returned container to the pointer every frame.
+ *
+ * The halo is the point: the eraser and the magnifier are drawn in ink, and
+ * ink on a dark arrow is invisible. A few stacked white discs behind the glyph
+ * keep it readable over anything on the board.
+ */
+export function makeToolCursor(
+  scene: Phaser.Scene,
+  kind: 'eraser' | 'hint',
+): Phaser.GameObjects.Container {
+  const layer = scene.add.container(0, 0).setDepth(400);
+  const size = 40;
+
+  const halo = scene.add.graphics();
+  softBlob(halo, size * 0.82, COLORS.card, 0.95);
+  layer.add(halo);
+
+  // Icon drawers may rotate the Graphics they are given (iconEraser tilts by
+  // -32 degrees), so the glyph gets its own object rather than the halo's.
+  const glyph = scene.add.graphics();
+  const drawer = kind === 'eraser' ? iconEraser : iconMagnifier;
+  drawer(glyph, size, COLORS.ink, 4);
+  layer.add(glyph);
+
+  return layer;
+}
+
+/**
  * Slowly turning golden rays behind a reward. Returns the Graphics so the
  * caller can park it in its own layer.
  */
@@ -927,13 +1422,29 @@ export function drawHappyFace(g: Phaser.GameObjects.Graphics, x: number, y: numb
   g.fillPath();
 }
 
-/** Full-screen scrim plus a white card, the shell every modal shares. */
+export interface ModalShell {
+  layer: Phaser.GameObjects.Container;
+  centreX: number;
+  centreY: number;
+  /** Card bounds in screen space. Every child of the modal belongs inside it. */
+  card: { x: number; y: number; width: number; height: number; right: number; bottom: number };
+}
+
+/**
+ * Full-screen scrim plus a white card, the shell every modal shares.
+ *
+ * The card carries a hairline of the *live* chapter accent, so a modal in
+ * chapter 3 is violet-edged and one in chapter 2 teal - the same trick the
+ * board uses to tell the player where they are. It is a hairline and not a
+ * band on purpose: this is meant to read as a sheet lifted off the same pale
+ * paper as the board, not as a titlebar.
+ */
 export function modalShell(
   scene: Phaser.Scene,
   cardWidth: number,
   cardHeight: number,
   depth = 200,
-): { layer: Phaser.GameObjects.Container; centreX: number; centreY: number } {
+): ModalShell {
   const { width, height } = scene.cameras.main;
   const layer = scene.add.container(0, 0).setDepth(depth);
 
@@ -941,15 +1452,74 @@ export function modalShell(
   dim.setInteractive();
   layer.add(dim);
 
+  const cardX = (width - cardWidth) / 2;
+  const cardY = (height - cardHeight) / 2;
+
   const card = scene.add.graphics();
-  drawCard(card, (width - cardWidth) / 2, (height - cardHeight) / 2, cardWidth, cardHeight, RADIUS.card);
+  drawCard(card, cardX, cardY, cardWidth, cardHeight, RADIUS.card);
+  card.lineStyle(2, mix(COLORS.card, COLORS.accent, 0.3), 1);
+  card.strokeRoundedRect(cardX, cardY, cardWidth, cardHeight, RADIUS.card);
   layer.add(card);
 
-  layer.setScale(0.9);
+  // Rise into place: a sheet coming up from the bottom edge reads as "this
+  // arrived" far more clearly than a pop in the middle of the screen. The fade
+  // is deliberately shorter than the move, so the card is solid while it is
+  // still travelling and the Back overshoot is visible instead of washed out.
+  layer.setPosition(0, 60);
+  layer.setScale(0.85);
   layer.setAlpha(0);
-  scene.tweens.add({ targets: layer, scale: 1, alpha: 1, duration: 220, ease: 'Back.easeOut' });
+  scene.tweens.add({
+    targets: layer,
+    y: 0,
+    scale: 1,
+    alpha: { from: 0, to: 1, duration: 200, ease: 'Quad.easeOut' },
+    duration: 320,
+    ease: 'Back.easeOut',
+  });
 
-  return { layer, centreX: width / 2, centreY: height / 2 };
+  return {
+    layer,
+    centreX: width / 2,
+    centreY: height / 2,
+    card: {
+      x: cardX,
+      y: cardY,
+      width: cardWidth,
+      height: cardHeight,
+      right: cardX + cardWidth,
+      bottom: cardY + cardHeight,
+    },
+  };
+}
+
+/**
+ * Land a modal's contents a beat after the card itself.
+ *
+ * `modalShell` springs the whole sheet up from the bottom edge; if everything
+ * inside arrives with it the modal reads as one flat image that moved. Popping
+ * the hero art and the headline a couple of frames later makes the card feel
+ * like a stage that something then walked onto.
+ */
+export type PopTarget =
+  | Phaser.GameObjects.Container
+  | Phaser.GameObjects.Graphics
+  | Phaser.GameObjects.Text;
+
+export function popIn(scene: Phaser.Scene, target: PopTarget, delay = 0, fromScale = 0.4): void {
+  target.setScale(fromScale);
+  target.setAlpha(0);
+
+  // Scale gets the overshoot, alpha does not - a Back ease on alpha would
+  // clamp at 1 and waste the tail of the curve.
+  const tween = scene.tweens.add({
+    targets: target,
+    scale: 1,
+    alpha: { from: 0, to: 1, duration: 160, ease: 'Quad.easeOut' },
+    duration: 420,
+    delay,
+    ease: 'Back.easeOut',
+  });
+  target.once('destroy', () => tween.remove());
 }
 
 /**
@@ -1002,6 +1572,92 @@ export function slider(
   };
   zone.on('pointerdown', apply);
   zone.on('drag', (pointer: Phaser.Input.Pointer) => apply(pointer));
+
+  return layer;
+}
+
+/**
+ * Two-state switch, the on/off sibling of `slider()` above.
+ *
+ * A pill reading ON/OFF is a label, not a control: the player has to read a
+ * word and then work out whether it describes the current state or the thing
+ * tapping would do. A track that fills with the chapter accent and a knob that
+ * slides answers both at once, in any language.
+ *
+ * Graphics cannot tween a fill colour, so the whole widget is redrawn from a
+ * single 0..1 progress value that the tween drives - which is also what lets
+ * the track colour and the knob travel move as one.
+ */
+export function toggleSwitch(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  value: boolean,
+  onChange: (value: boolean) => void,
+): Phaser.GameObjects.Container {
+  const layer = scene.add.container(x, y);
+  const width = 78;
+  const height = 42;
+  const radius = height / 2;
+  const knobRadius = 16;
+  /** How far the knob centre sits from the middle at either end. */
+  const travel = width / 2 - radius;
+
+  const g = scene.add.graphics();
+  layer.add(g);
+
+  let on = value;
+  const state = { t: value ? 1 : 0 };
+
+  const redraw = (): void => {
+    g.clear();
+    g.fillStyle(mix(COLORS.locked, COLORS.accent, state.t), 1);
+    g.fillRoundedRect(-width / 2, -height / 2, width, height, radius);
+
+    const kx = -travel + travel * 2 * state.t;
+    drawShadow(g, kx - knobRadius, -knobRadius, knobRadius * 2, knobRadius * 2, knobRadius, 4, 2);
+    g.fillStyle(COLORS.card, 1);
+    g.fillCircle(kx, 0, knobRadius);
+    // Same hairline the slider knob wears, for the same reason: a white disc
+    // on a pale track needs an edge or the off state loses its knob.
+    g.lineStyle(2, mix(COLORS.dot, COLORS.accent, state.t), 1);
+    g.strokeCircle(kx, 0, knobRadius);
+  };
+  redraw();
+
+  // Generous target: the knob is 32px across, a thumb is not.
+  const zone = scene.add.zone(0, 0, width + 28, height + 22).setOrigin(0.5);
+  zone.setInteractive({ useHandCursor: true });
+  layer.add(zone);
+
+  let tween: Phaser.Tweens.Tween | null = null;
+  // Pair down with up, so a drag that happens to end over the switch cannot
+  // flip it - the slider next door is dragged constantly.
+  let armed = false;
+  zone.on('pointerdown', () => {
+    armed = true;
+  });
+  zone.on('pointerout', () => {
+    armed = false;
+  });
+  zone.on('pointerup', () => {
+    if (!armed) return;
+    armed = false;
+    on = !on;
+    tween?.remove();
+    tween = scene.tweens.add({
+      targets: state,
+      t: on ? 1 : 0,
+      duration: 180,
+      ease: 'Cubic.easeOut',
+      onUpdate: redraw,
+      onComplete: () => {
+        tween = null;
+      },
+    });
+    onChange(on);
+  });
+  layer.once('destroy', () => tween?.remove());
 
   return layer;
 }

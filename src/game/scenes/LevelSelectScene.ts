@@ -174,14 +174,25 @@ export class LevelSelectScene extends Phaser.Scene {
     }
 
     if (isCurrent) {
-      // Soft pulse so the eye lands on "where I am" immediately.
+      // Springs into place so "where I am" catches the eye the moment the
+      // grid renders, then settles into the ambient idle pulse below.
+      container.setScale(0);
       this.tweens.add({
         targets: container,
-        scale: 1.06,
-        duration: 900,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
+        scale: 1,
+        duration: 600,
+        ease: 'Elastic.easeOut',
+        onComplete: () => {
+          // Soft pulse so the eye lands on "where I am" immediately.
+          this.tweens.add({
+            targets: container,
+            scale: 1.06,
+            duration: 900,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut',
+          });
+        },
       });
     }
 

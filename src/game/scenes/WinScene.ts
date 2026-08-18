@@ -7,7 +7,7 @@
  */
 import Phaser from 'phaser';
 import { COLORS, FONT, applyChapterPalette, columnBounds, hex } from '../theme';
-import { Button, confetti, drawCoin, drawHappyFace, drawStar, goldenBurst } from '../ui';
+import { Button, burstShapes, confetti, drawCoin, drawHappyFace, drawStar, goldenBurst } from '../ui';
 import { progress, COINS_PER_WIN, COINS_BONUS } from '../progress';
 import { refByGlobal, TOTAL_LEVELS } from '../levels';
 import { t } from '../i18n';
@@ -78,7 +78,24 @@ export class WinScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setLetterSpacing(2);
     banner.setScale(0.5);
-    this.tweens.add({ targets: banner, scale: 1, duration: 420, ease: 'Back.easeOut' });
+    this.tweens.add({
+      targets: banner,
+      scale: 1,
+      duration: 420,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        // A tiny settle once it lands, not a permanent idle animation —
+        // finite repeat so nothing keeps ticking after the scene closes.
+        this.tweens.add({
+          targets: banner,
+          scale: 1.04,
+          duration: 160,
+          yoyo: true,
+          repeat: 2,
+          ease: 'Sine.easeInOut',
+        });
+      },
+    });
 
     // ---- mascot ----------------------------------------------------------
     const face = this.add.graphics();
@@ -167,20 +184,27 @@ export class WinScene extends Phaser.Scene {
   }
 
   private buildStars(x: number, y: number): void {
+    const sweep = this.result.stars === 3;
     for (let i = 0; i < 3; i++) {
       const earned = i < this.result.stars;
       const g = this.add.graphics();
       drawStar(g, 0, 0, 34, earned ? COLORS.amber : 0x3a3d48, true);
-      g.setPosition(x + (i - 1) * 88, y - (i === 1 ? 14 : 0));
+      const sx = x + (i - 1) * 88;
+      const sy = y - (i === 1 ? 14 : 0);
+      g.setPosition(sx, sy);
 
       if (earned) {
         g.setScale(0);
         this.tweens.add({
           targets: g,
           scale: 1,
-          duration: 360,
-          delay: 300 + 130 * i,
-          ease: 'Back.easeOut',
+          duration: 700,
+          delay: 300 + 200 * i,
+          // Elastic needs the extra length to actually read as a spring,
+          // where Back's overshoot was over almost before it started.
+          ease: 'Elastic.easeOut',
+          // Only the third star of a full sweep gets the payoff burst.
+          onComplete: i === 2 && sweep ? () => burstShapes(this, sx, sy) : undefined,
         });
       }
     }

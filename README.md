@@ -161,13 +161,24 @@ whole world is scaled to fit; the player zooms in from there.
   overflowing axis can be panned, and only as far as its own edge
 - a one-off coach mark explains the zoom the first time a board overflows
 
+### Reading the board
+
+Each direction has its own ink — deep navy up, brick red right, forest green down,
+dark amber left — all matched to within a few points of the same luminance, so a
+90-arrow board still reads as line art rather than a bag of primaries.
+
+Press and hold an arrow for 150ms to ask whether it can leave: free arrows glow
+green and trace their exit lane, blocked ones show a stop mark on the offending
+cell. Releasing after a hold is a query, not a move — it never launches and never
+costs a heart.
+
 ### Hearts and the clock
 
 Three hearts. A tap on a blocked arrow wiggles it, flashes it red, vibrates,
 draws the obstructed stretch of ray in red — so the player can see *why* — and
 costs one heart.
 
-The clock starts at `45s + 5s per arrow`. At zero, or at zero hearts, the same
+The clock starts at `30s + 2s per arrow`, capped at 150s — generous enough to think, tight enough that you cannot coast. At zero, or at zero hearts, the same
 modal offers a rewarded video (+3 hearts, or +60 s) or 450 coins.
 
 ### Tools
