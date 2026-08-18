@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "noEmit": true,
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "skipLibCheck": true,
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src", "scripts", "vite.config.ts"]
+}

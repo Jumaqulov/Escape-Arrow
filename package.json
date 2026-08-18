@@ -1,0 +1,28 @@
+{
+  "name": "arrow-escape",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "validate": "tsx scripts/validate-levels.ts",
+    "generate": "tsx scripts/generate-levels.ts",
+    "sounds": "tsx scripts/make-sounds.ts",
+    "zip": "tsx scripts/pack-dist.ts",
+    "release": "npm run validate && npm run build && npm run zip"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "description": "Arrow Escape - a minimalist tap puzzle for Yandex Games and CrazyGames",
+  "license": "UNLICENSED"
+}
