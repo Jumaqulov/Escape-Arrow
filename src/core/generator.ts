@@ -218,7 +218,7 @@ export function generateLevel(opts: GenerateOptions): Board | null {
 
   // The neck rule means every arrow is at least a head plus one cell.
   if (opts.minTail < 1) return null;
-  if (opts.count * (1 + opts.minTail) > opts.w * opts.h) return null;
+  if ((opts.minCount ?? opts.count) * (1 + opts.minTail) > opts.w * opts.h) return null;
 
   const rnd = mulberry32(opts.seed);
 

@@ -41,9 +41,9 @@ hint / eraser / grid / refill flows can all be exercised offline.
 unsolvable, malformed, duplicated, or outside its chapter's design budget.
 
 ```
-Chapter 1: 50 levels | arrows 5-46  (avg 36.9) | density 51.6% | openings 15.3
-Chapter 2: 50 levels | arrows 44-70 (avg 61.8) | density 65.3% | openings 28.2
-Chapter 3: 50 levels | arrows 74-102(avg 92.8) | density 62.2% | openings 39.8
+Chapter 1: 50 levels | arrows 5-54 (avg 44.2) | cells 125.7 | density 76.1% | openings 22.0
+Chapter 2: 50 levels | arrows 50-69 (avg 60.3) | cells 171.8 | density 74.9% | openings 28.3
+Chapter 3: 50 levels | arrows 63-99 (avg 83.6) | cells 237.8 | density 71.0% | openings 37.5
 OK - all 150 levels are solvable and within budget.
 ```
 
@@ -98,15 +98,14 @@ solution. The tail *is* free to lie across an **earlier** arrow's ray — that
 arrow is tapped later, by which time this one is long gone. That is what turns
 a pile of arrows into a dependency chain.
 
-Two details let it reach reference density (~60% of cells) instead of stalling
-around 27 arrows:
+Two details let it reach ~74% of cells instead of stalling around 27 arrows:
 
 - a tail walk that gets boxed in **keeps what it has** rather than throwing the
   whole board away, provided it met `minTail`;
 - running out of legal heads **ends the board** instead of discarding it.
 
-On the biggest grids `walk: 'open'` switches the tail to Warnsdorff's rule —
-always step into the cell that keeps the most exits free.
+The builder is asked to FILL each grid rather than hit a fixed count, so every
+board lands at the rule set's ceiling and the ramp is carried by grid size.
 
 Everything is seeded (Mulberry32), so `npm run generate` is reproducible: the
 same `BASE_SEED` always yields the same 150 levels.
@@ -135,15 +134,15 @@ tutorial. From level 2 the board is already busy, on a front-loaded `t^0.45`
 curve — a sparse board is solved on sight, which is what makes players bounce.
 
 ```
-level:   1    2    3    5    12   20   50   100   150
-arrows:  5    23   25   27   32   36   46   70    95
+level:     1   2   5  25  50  75 100 125 150
+arrows:    5  40  36  44  48  59  65  86  91
 ```
 
 | Chapter | Grid | Arrows | Tail |
 | --- | --- | --- | --- |
-| 1 | 8×10 → 14×17 | 5 → 46 | 1–3 |
-| 2 | 14×17 → 17×21 | 44 → 70 | 1–4 |
-| 3 | 18×22 → 20×26 | 74 → 102 | 1–4 |
+| 1 | 8×10 → 12×15 | 5 → 54 | 1–3 |
+| 2 | 12×15 → 14×18 | 50 → 69 | 1–3 |
+| 3 | 14×18 → 17×22 | 63 → 99 | 1–3 |
 
 ---
 
@@ -151,7 +150,7 @@ arrows:  5    23   25   27   32   36   46   70    95
 
 ### Camera
 
-A 20×26 board squeezed into 720 px would give 30 px cells, too small for a
+A 17×22 board squeezed into 720 px would give 30 px cells, too small for a
 thumb. So the board is drawn at a **fixed 48 px cell in world space** and the
 whole world is scaled to fit; the player zooms in from there.
 

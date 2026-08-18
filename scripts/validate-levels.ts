@@ -33,9 +33,9 @@ interface Budget {
  * ramp, so the gate checks the band rather than one number.
  */
 const BUDGETS: Budget[] = [
-  { minSize: 8, maxSize: 18, minArrows: 5, maxArrows: 50, minTail: 1, maxTail: 3 },
-  { minSize: 14, maxSize: 21, minArrows: 30, maxArrows: 75, minTail: 1, maxTail: 4 },
-  { minSize: 18, maxSize: 26, minArrows: 50, maxArrows: 110, minTail: 1, maxTail: 4 },
+  { minSize: 8, maxSize: 16, minArrows: 5, maxArrows: 60, minTail: 1, maxTail: 3 },
+  { minSize: 12, maxSize: 19, minArrows: 40, maxArrows: 78, minTail: 1, maxTail: 3 },
+  { minSize: 14, maxSize: 23, minArrows: 55, maxArrows: 108, minTail: 1, maxTail: 3 },
 ];
 
 function signatureOf(level: LevelData): string {

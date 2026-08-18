@@ -44,27 +44,27 @@ const OPENER = { w: 8, h: 10, arrows: 5 };
 const CHAPTERS: ChapterSpec[] = [
   {
     name: 'Chapter 1',
-    from: { w: 11, h: 14, arrows: 18 },
-    to: { w: 14, h: 17, arrows: 46 },
+    from: { w: 10, h: 13, arrows: 30 },
+    to: { w: 12, h: 15, arrows: 48 },
     minTail: 1,
     maxTail: 3,
     walk: 'random',
   },
   {
     name: 'Chapter 2',
-    from: { w: 14, h: 17, arrows: 44 },
-    to: { w: 17, h: 21, arrows: 70 },
+    from: { w: 12, h: 15, arrows: 48 },
+    to: { w: 14, h: 18, arrows: 62 },
     minTail: 1,
-    maxTail: 4,
+    maxTail: 3,
     walk: 'random',
   },
   {
     name: 'Chapter 3',
-    from: { w: 18, h: 22, arrows: 74 },
-    to: { w: 20, h: 26, arrows: 104 },
+    from: { w: 14, h: 18, arrows: 62 },
+    to: { w: 17, h: 22, arrows: 90 },
     minTail: 1,
-    maxTail: 4,
-    walk: 'open',
+    maxTail: 3,
+    walk: 'random',
   },
 ];
 
@@ -118,10 +118,12 @@ for (let c = 0; c < CHAPTERS.length; c++) {
       const board = generateLevel({
         w,
         h,
-        count: wanted,
+        // Fill the grid to the rule set's ceiling - except the tutorial board,
+        // which stays deliberately tiny.
+        count: opener ? OPENER.arrows : 999,
         // A board that runs out of legal placements early is still a good
         // board - take it rather than looping forever chasing an exact count.
-        minCount: Math.round(wanted * 0.72),
+        minCount: wanted,
         seed: seedCursor,
         minTail: spec.minTail,
         maxTail: spec.maxTail,
