@@ -7,6 +7,8 @@ import { LevelSelectScene } from './game/scenes/LevelSelectScene';
 import { LevelScene } from './game/scenes/LevelScene';
 import { WinScene } from './game/scenes/WinScene';
 import { SettingsScene } from './game/scenes/SettingsScene';
+import { ShopScene } from './game/scenes/ShopScene';
+import { progress } from './game/progress';
 import { getSdk } from './sdk/sdk';
 
 const config: Phaser.Types.Core.GameConfig = {
@@ -25,7 +27,7 @@ const config: Phaser.Types.Core.GameConfig = {
   },
   disableContextMenu: true,
   banner: false,
-  scene: [BootScene, MenuScene, LevelSelectScene, LevelScene, WinScene, SettingsScene],
+  scene: [BootScene, MenuScene, LevelSelectScene, LevelScene, WinScene, SettingsScene, ShopScene],
 };
 
 const game = new Phaser.Game(config);
@@ -37,9 +39,19 @@ if (import.meta.env.DEV) {
 
 // Portals want to know when the player is actually playing: tabbing away has
 // to pause the gameplay signal or the analytics (and the ad policy) are wrong.
+// The scene holds gameplayStop while a modal or fail overlay is open, and a
+// refocus must not override that.
 game.events.on(Phaser.Core.Events.BLUR, () => getSdk().gameplayStop());
 game.events.on(Phaser.Core.Events.FOCUS, () => {
-  if (game.scene.isActive('Level')) getSdk().gameplayStart();
+  const level = game.scene.getScene('Level') as LevelScene | null;
+  if (game.scene.isActive('Level') && level?.gameplayActive) getSdk().gameplayStart();
+});
+
+// The debounced save never fires if the page goes away first: flush so a
+// reward granted moments before backgrounding survives.
+window.addEventListener('pagehide', () => progress.flush());
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') progress.flush();
 });
 
 declare global {

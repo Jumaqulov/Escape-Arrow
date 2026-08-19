@@ -6,6 +6,7 @@
  * indigo accent, with pink and amber as the only other voices.
  */
 import type { Dir } from '../core/types';
+import { progress } from './progress';
 
 export const DESIGN_WIDTH = 720;
 export const DESIGN_HEIGHT = 1280;
@@ -103,9 +104,14 @@ let activeChapter = 0;
 /**
  * Re-skin the game for a chapter. Call this in a scene's `init()`, before
  * anything has been drawn.
+ *
+ * A bought theme pins the palette: `progress.themeChoice` 0..2 wins over the
+ * chapter's own, and -1 (the default) keeps the chapter behaviour.
  */
 export function applyChapterPalette(chapter: number): void {
-  activeChapter = Math.max(0, Math.min(CHAPTER_PALETTES.length - 1, chapter));
+  const choice = progress.themeChoice;
+  const wanted = choice >= 0 ? choice : chapter;
+  activeChapter = Math.max(0, Math.min(CHAPTER_PALETTES.length - 1, wanted));
   Object.assign(COLORS, BASE_COLORS, CHAPTER_PALETTES[activeChapter]);
 }
 
@@ -151,6 +157,75 @@ export const DIR_INK: Readonly<Record<Dir, number>> = {
   /** Dark amber. */
   L: 0x6b4410,
 };
+
+/**
+ * A purchasable recolour of the arrow ink. Every `ink` set inherits DIR_INK's
+ * contrast duty: four directions a player can tell apart at a glance on the
+ * pale board, without any of them vanishing into the white card.
+ */
+export interface ArrowSkin {
+  id: string;
+  nameKey: string;
+  price: number;
+  ink: Record<Dir, number>;
+}
+
+/**
+ * The shop's catalogue. Each paid set keeps classic's hue-per-direction logic
+ * (cool = up, red = right, green = down, warm = left) where it can, so a
+ * player who has internalised "blue means up" keeps that reflex across skins.
+ * Mono deliberately gives that up: it is a single slate hue on a wide,
+ * evenly-spaced value ladder, and direction leans on the head glyph plus the
+ * ladder - the luxe-minimal look is the whole point of paying for it.
+ */
+export const ARROW_SKINS: ArrowSkin[] = [
+  { id: 'classic', nameKey: 'skinClassic', price: 0, ink: { ...DIR_INK } },
+  {
+    id: 'neon',
+    nameKey: 'skinNeon',
+    price: 400,
+    // Bright and saturated, but each still dark enough to hold an 8px line
+    // against white; orange is the lightest and sits at the readable floor.
+    ink: { U: 0x0e6fe8, R: 0xe8244e, D: 0x00a45a, L: 0xf07800 },
+  },
+  {
+    id: 'pastel',
+    nameKey: 'skinPastel',
+    price: 400,
+    // Softened, not washed out: candy hues at mid value, never tint-light.
+    ink: { U: 0x6d83d1, R: 0xd4708f, D: 0x5cab84, L: 0xc79a4e },
+  },
+  {
+    id: 'mono',
+    nameKey: 'skinMono',
+    price: 600,
+    // One near-ink slate hue; the four steps are spaced far enough apart
+    // that lightness alone separates the directions.
+    ink: { U: 0x14161f, R: 0x363d52, D: 0x59637f, L: 0x7f89a6 },
+  },
+  {
+    id: 'gold',
+    nameKey: 'skinGold',
+    price: 900,
+    // Amber and bronze, but each direction keeps a hue tilt - brown-bronze,
+    // russet copper, olive, bright amber - so the set is luxe without
+    // collapsing into four indistinguishable golds.
+    ink: { U: 0x6d4712, R: 0xa8431c, D: 0x6b6b14, L: 0xc08a0a },
+  },
+];
+
+/**
+ * The live arrow ink, exactly like COLORS: gameplay reads these fields at
+ * draw time, and applying a skin assigns into them rather than swapping the
+ * object, so nothing has to be re-threaded through constructors.
+ */
+export const ARROW_INK: Record<Dir, number> = { ...DIR_INK };
+
+/** Apply an owned skin's ink set. Unknown ids fall back to classic. */
+export function applyArrowSkin(id: string): void {
+  const skin = ARROW_SKINS.find((s) => s.id === id) ?? ARROW_SKINS[0]!;
+  Object.assign(ARROW_INK, skin.ink);
+}
 
 /**
  * System rounded stack - nothing is fetched. Nunito and Arial Rounded MT Bold

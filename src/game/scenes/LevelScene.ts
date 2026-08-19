@@ -8,7 +8,7 @@ import type { Arrow, Cell, Board } from '../../core/types';
 import { DX, DY, arrowCells } from '../../core/types';
 import { blockerOf, freeArrows, isFree, pathCells } from '../../core/rules';
 import { parseLevel } from '../../core/format';
-import { COLORS, DIR_INK, FONT, RADIUS, applyChapterPalette, darken, hex } from '../theme';
+import { ARROW_INK, COLORS, FONT, RADIUS, applyArrowSkin, applyChapterPalette, darken, hex } from '../theme';
 import {
   Button,
   CoinButton,
@@ -53,7 +53,7 @@ import {
 import { playSound, setSoundEnabled } from '../audio';
 import { progress, TOOL_PACK, TOOL_PRICE, TOOL_UNLOCK_AT } from '../progress';
 import type { Tool } from '../progress';
-import { CHAPTERS, refByGlobal, type LevelRef } from '../levels';
+import { CHAPTERS, TOTAL_LEVELS, bossData, dailyData, refByGlobal, type LevelRef } from '../levels';
 import { t } from '../i18n';
 import { getSdk } from '../../sdk/sdk';
 
@@ -114,6 +114,8 @@ const BOARD_BOTTOM = TOOLBAR_Y - TOOLBAR_SIZE / 2 - BOARD_GAP;
 
 export class LevelScene extends Phaser.Scene {
   private ref!: LevelRef;
+  /** Set for the two out-of-campaign modes; null for a normal campaign level. */
+  private special: { kind: 'boss'; chapter: number } | { kind: 'daily' } | null = null;
   private board!: Board;
 
   private cell = 64;
@@ -130,6 +132,12 @@ export class LevelScene extends Phaser.Scene {
   private bestStreak = 0;
   private undoFreeSpent = false;
   private busy = false;
+  /**
+   * Rewarded videos this scene is awaiting. Deliberately not reset in init():
+   * a restart under a live ad still gets that ad's decrement when the await
+   * settles, so the count can never drift negative.
+   */
+  private adsInFlight = 0;
   private finished = false;
   private failed = false;
 
@@ -152,6 +160,7 @@ export class LevelScene extends Phaser.Scene {
   private gridLayer: Phaser.GameObjects.Container | null = null;
   private backdrop!: Phaser.GameObjects.Container;
   private coinText!: Phaser.GameObjects.Text;
+  private purseBg!: Phaser.GameObjects.Graphics;
   private toolButtons = new Map<Tool, IconButton>();
   private dragging = false;
   private dragMoved = 0;
@@ -181,11 +190,32 @@ export class LevelScene extends Phaser.Scene {
     super('Level');
   }
 
-  init(data: { global?: number }): void {
-    const ref = refByGlobal(data?.global ?? 0) ?? refByGlobal(0);
-    if (!ref) throw new Error('LevelScene: level pack is empty');
-    this.ref = ref;
-    applyChapterPalette(ref.chapter);
+  init(data: { global?: number; boss?: number; daily?: boolean }): void {
+    if (typeof data?.boss === 'number') {
+      // Boss board: the chapter's own palette and every tool available. The
+      // synthetic ref's `global: TOTAL_LEVELS` clears every TOOL_UNLOCK_AT
+      // gate, matches no pendingToolUnlock level and no tutorial board, so
+      // specials get the full toolbar with none of the campaign ceremony.
+      const level = bossData(data.boss);
+      if (!level) throw new Error(`LevelScene: no boss for chapter ${data.boss}`);
+      this.special = { kind: 'boss', chapter: data.boss };
+      this.ref = { chapter: data.boss, index: 0, global: TOTAL_LEVELS, data: level };
+    } else if (data?.daily) {
+      // Seeded by the LOCAL date with the dashes stripped (2026-08-19 ->
+      // 20260819), so everyone shares one board per calendar day. The board
+      // wears whatever chapter the player is currently in.
+      const seed = Number(progress.todayKey().replace(/-/g, ''));
+      const chapter = refByGlobal(progress.resumeGlobal())?.chapter ?? 0;
+      this.special = { kind: 'daily' };
+      this.ref = { chapter, index: 0, global: TOTAL_LEVELS, data: dailyData(seed) };
+    } else {
+      this.special = null;
+      const ref = refByGlobal(data?.global ?? 0) ?? refByGlobal(0);
+      if (!ref) throw new Error('LevelScene: level pack is empty');
+      this.ref = ref;
+    }
+    applyChapterPalette(this.ref.chapter);
+    applyArrowSkin(progress.skin);
 
     this.views = new Map();
     this.history = [];
@@ -215,6 +245,11 @@ export class LevelScene extends Phaser.Scene {
     this.toolButtons = new Map();
     this.overlayLayer = null;
     this.tutorial = null;
+  }
+
+  /** True only while the portal should be told gameplay is running. */
+  get gameplayActive(): boolean {
+    return !this.failed && !this.finished && !this.overlayLayer && this.adsInFlight === 0;
   }
 
   create(): void {
@@ -371,11 +406,16 @@ export class LevelScene extends Phaser.Scene {
       // got its release (alt-tab, a finger lifted off-canvas) left behind.
       if (!this.holdPressed) this.cancelHold();
       this.holdPressed = false;
+      // A modal owns the screen, and a settled level is no longer a board to
+      // pan - a press on either must not start a drag.
+      if (this.overlayLayer || this.finished || this.failed) return;
       this.dragging = true;
       this.dragMoved = 0;
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      // The press can predate the modal; the move must still not pan under it.
+      if (this.overlayLayer || this.finished || this.failed) return;
       if (!this.dragging || !pointer.isDown) return;
       const dx = pointer.x - pointer.prevPosition.x;
       const dy = pointer.y - pointer.prevPosition.y;
@@ -536,9 +576,9 @@ export class LevelScene extends Phaser.Scene {
     drawPolyArrow(view.gfx, local, this.lineWidth, color, view.arrow.dir, this.cell);
   }
 
-  /** Repaint an arrow in its own direction's ink. */
+  /** Repaint an arrow in its own direction's ink, as the applied skin has it. */
   private repaint(view: ArrowView): void {
-    this.paint(view, DIR_INK[view.arrow.dir]);
+    this.paint(view, ARROW_INK[view.arrow.dir]);
   }
 
   /**
@@ -1003,42 +1043,57 @@ export class LevelScene extends Phaser.Scene {
     // ---- centre: level number, and where it sits in the chapter ----------
     // A global level number alone says nothing a player can act on. How far
     // into the current chapter they are is the progress they actually feel,
-    // so the count and a slim bar sit under the headline.
-    const chapterLength = CHAPTERS[this.ref.chapter]?.levels.length ?? 50;
-    const done = this.ref.index + 1;
+    // so the count and a slim bar sit under the headline. Specials sit outside
+    // the campaign - a name instead of a number, and no chapter bar, because
+    // there is no "12 of 50" for them to be part of.
+    if (this.special) {
+      this.add
+        .text(width / 2, HUD_Y, this.special.kind === 'boss' ? t('boss') : t('daily'), {
+          fontFamily: FONT,
+          fontSize: '30px',
+          color: hex(COLORS.ink),
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5);
+    } else {
+      const chapterLength = CHAPTERS[this.ref.chapter]?.levels.length ?? 50;
+      const done = this.ref.index + 1;
 
-    this.add
-      .text(width / 2, HUD_Y - 12, `${t('levelShort')}${this.ref.data.id}`, {
-        fontFamily: FONT,
-        fontSize: '30px',
-        color: hex(COLORS.ink),
-        fontStyle: 'bold',
-      })
-      .setOrigin(0.5);
-    this.add
-      .text(width / 2, HUD_Y + 14, `${done}/${chapterLength}`, {
-        fontFamily: FONT,
-        fontSize: '15px',
-        color: hex(COLORS.inkMuted),
-        fontStyle: 'bold',
-      })
-      .setOrigin(0.5);
+      this.add
+        .text(width / 2, HUD_Y - 12, `${t('levelShort')}${this.ref.data.id}`, {
+          fontFamily: FONT,
+          fontSize: '30px',
+          color: hex(COLORS.ink),
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5);
+      this.add
+        .text(width / 2, HUD_Y + 14, `${done}/${chapterLength}`, {
+          fontFamily: FONT,
+          fontSize: '15px',
+          color: hex(COLORS.inkMuted),
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5);
 
-    const barWidth = 112;
-    const bar = this.add.graphics();
-    bar.fillStyle(COLORS.locked, 1);
-    bar.fillRoundedRect(width / 2 - barWidth / 2, HUD_Y + 28, barWidth, 5, 2.5);
-    bar.fillStyle(COLORS.accent, 1);
-    bar.fillRoundedRect(
-      width / 2 - barWidth / 2,
-      HUD_Y + 28,
-      Math.max(5, (barWidth * done) / chapterLength),
-      5,
-      2.5,
-    );
+      const barWidth = 112;
+      const bar = this.add.graphics();
+      bar.fillStyle(COLORS.locked, 1);
+      bar.fillRoundedRect(width / 2 - barWidth / 2, HUD_Y + 28, barWidth, 5, 2.5);
+      bar.fillStyle(COLORS.accent, 1);
+      bar.fillRoundedRect(
+        width / 2 - barWidth / 2,
+        HUD_Y + 28,
+        Math.max(5, (barWidth * done) / chapterLength),
+        5,
+        2.5,
+      );
+    }
 
     // ---- countdown, sitting under the pill like the reference ------------
-    this.timerLayer = this.add.container(width / 2, HUD_Y + HUD_HEIGHT / 2 + 20);
+    // Fully below the card: the pill is 52 tall, so anything under +26 of
+    // clearance leaves it overlapping the card's bottom edge.
+    this.timerLayer = this.add.container(width / 2, HUD_Y + HUD_HEIGHT / 2 + 36);
     this.timerBg = this.add.graphics();
     this.timerLayer.add(this.timerBg);
     // Left-aligned: the ring is laid out first and the text is parked beside
@@ -1055,25 +1110,27 @@ export class LevelScene extends Phaser.Scene {
     this.updateTimer();
 
     // ---- coin purse ------------------------------------------------------
-    // Parked on the right, beside the gear: the labelled back pill now owns
-    // the whole left end of the top row.
-    const purse = this.add.graphics();
-    drawCoin(purse, width - 200, 52, 15);
+    // A proper pill beside the gear, right-anchored so a growing balance
+    // widens it leftwards into free space instead of crowding the gear.
+    this.purseBg = this.add.graphics();
     this.coinText = this.add
-      .text(width - 180, 52, String(progress.coins), {
+      .text(0, 52, String(progress.coins), {
         fontFamily: FONT,
         fontSize: '20px',
         color: hex(COLORS.inkSoft),
         fontStyle: '800',
       })
       .setOrigin(0, 0.5);
+    this.redrawPurse();
 
     // ---- right: hearts ---------------------------------------------------
-    this.heartLayer = this.add.container(pillX + pillWidth - 96, HUD_Y);
+    // 40px apart for a 28px heart: enough air that three read as three, not
+    // as one pink blob.
+    this.heartLayer = this.add.container(pillX + pillWidth - 112, HUD_Y);
     for (let i = 0; i < MAX_HEARTS; i++) {
       const g = this.add.graphics();
       drawHeart(g, 0, 0, 28, COLORS.pink);
-      g.setPosition(i * 32, 0);
+      g.setPosition(i * 40, 0);
       this.heartLayer.add(g);
       this.hearts3.push(g);
     }
@@ -1098,6 +1155,9 @@ export class LevelScene extends Phaser.Scene {
 
   private tickTimer(): void {
     if (this.finished || this.failed || this.timedOut) return;
+    // Seconds spent in a modal or watching a rewarded video are not seconds
+    // spent solving, so the clock holds while either owns the screen.
+    if (this.overlayLayer || this.adsInFlight > 0) return;
     this.secondsLeft = Math.max(0, this.secondsLeft - 1);
     this.updateTimer();
     if (this.secondsLeft === 0) {
@@ -1182,7 +1242,24 @@ export class LevelScene extends Phaser.Scene {
       // says the same thing honestly: still usable, costs a video.
       button.setBadge(state.unlocked ? (state.charges > 0 ? String(state.charges) : 'AD') : undefined);
     }
-    if (this.coinText) this.coinText.setText(String(progress.coins));
+    if (this.coinText) this.redrawPurse();
+  }
+
+  /** Repaint the coin pill: the width follows however many digits are banked. */
+  private redrawPurse(): void {
+    if (!this.coinText || !this.purseBg) return;
+    this.coinText.setText(String(progress.coins));
+    const height = 44;
+    const coinR = 13;
+    const pad = 14;
+    const gap = 8;
+    const pillW = pad + coinR * 2 + gap + this.coinText.width + pad;
+    // 10px shy of the gear button's left edge.
+    const right = this.cameras.main.width - 92;
+    this.purseBg.clear();
+    drawCard(this.purseBg, right - pillW, 52 - height / 2, pillW, height, height / 2);
+    drawCoin(this.purseBg, right - pillW + pad + coinR, 52, coinR);
+    this.coinText.setPosition(right - pillW + pad + coinR * 2 + gap, 52);
   }
 
   /**
@@ -1229,6 +1306,7 @@ export class LevelScene extends Phaser.Scene {
       // is killed before the layer goes.
       this.tweens.killTweensOf(rays);
       layer.destroy();
+      this.reattemptFail();
       if (!this.failed && !this.finished) getSdk().gameplayStart();
     };
 
@@ -1303,12 +1381,24 @@ export class LevelScene extends Phaser.Scene {
         badge: 'AD',
         onClick: () => {
           void (async () => {
-            const granted = await getSdk().showRewarded();
+            // One request at a time: a second tap while the video is still
+            // loading must not queue a second video or a second grant.
+            if (this.busy) return;
+            this.busy = true;
+            let granted = false;
+            try {
+              granted = await this.showRewarded();
+            } finally {
+              this.busy = false;
+            }
             if (!granted) {
               toast(this, t('adFailed'), COLORS.danger);
               return;
             }
+            // The charge is persistent, so a player whose level settled while
+            // the video ran still keeps what the ad paid for.
             progress.grantTool(tool, 1);
+            if (this.finished || this.failed || this.timedOut) return;
             this.refreshTools();
             close();
           })();
@@ -1386,8 +1476,12 @@ export class LevelScene extends Phaser.Scene {
       return;
     }
     this.busy = true;
-    const paid = await this.spendTool('eraser');
-    this.busy = false;
+    let paid = false;
+    try {
+      paid = await this.spendTool('eraser');
+    } finally {
+      this.busy = false;
+    }
     if (!paid) return;
     this.armEraser();
   }
@@ -1498,8 +1592,12 @@ export class LevelScene extends Phaser.Scene {
       return;
     }
     this.busy = true;
-    const paid = await this.spendTool('grid');
-    this.busy = false;
+    let paid = false;
+    try {
+      paid = await this.spendTool('grid');
+    } finally {
+      this.busy = false;
+    }
     if (!paid) return;
 
     this.gridOn = true;
@@ -1550,8 +1648,11 @@ export class LevelScene extends Phaser.Scene {
   // ---- unlock ceremony -----------------------------------------------
 
   private showToolUnlock(tool: Tool): void {
+    if (this.overlayLayer) return;
     const { width, height } = this.cameras.main;
     const layer = this.add.container(0, 0).setDepth(220);
+    this.overlayLayer = layer;
+    getSdk().gameplayStop();
 
     const dim = this.add.rectangle(width / 2, height / 2, width, height, COLORS.ink, 0.55);
     dim.setInteractive();
@@ -1631,7 +1732,13 @@ export class LevelScene extends Phaser.Scene {
           progress.markToolSeen(tool);
           this.refreshTools();
           confetti(this, width / 2, height * 0.45, 40);
+          // The rays spin forever; the tween outlives the Graphics unless it
+          // is killed before the layer goes.
+          this.tweens.killTweensOf(rays);
+          this.overlayLayer = null;
           layer.destroy();
+          this.reattemptFail();
+          if (!this.failed && !this.finished) getSdk().gameplayStart();
         },
       }),
     );
@@ -1738,6 +1845,16 @@ export class LevelScene extends Phaser.Scene {
     });
   }
 
+  /** Every rewarded video goes through here, so the countdown holds while it plays. */
+  private async showRewarded(): Promise<boolean> {
+    this.adsInFlight++;
+    try {
+      return await getSdk().showRewarded();
+    } finally {
+      this.adsInFlight--;
+    }
+  }
+
   /** Hint and undo are free once each per level, then cost a rewarded video. */
   private async payFor(kind: 'undo'): Promise<boolean> {
     const spent = this.undoFreeSpent;
@@ -1748,7 +1865,7 @@ export class LevelScene extends Phaser.Scene {
       return true;
     }
 
-    const granted = await getSdk().showRewarded();
+    const granted = await this.showRewarded();
     if (!granted) toast(this, t('adFailed'), COLORS.danger);
     return granted;
   }
@@ -1763,24 +1880,26 @@ export class LevelScene extends Phaser.Scene {
   private async onUndo(): Promise<void> {
     if (this.busy || this.finished || this.failed || this.history.length === 0) return;
     this.busy = true;
+    try {
+      if (!(await this.payFor('undo'))) return;
+      // The level can settle while the video plays - a last arrow still in
+      // flight, a fail latching - and a settled board must not be mutated.
+      if (this.finished || this.failed || this.timedOut) return;
 
-    if (!(await this.payFor('undo'))) {
+      const arrow = this.history.pop();
+      if (arrow) {
+        this.board.arrows.push(arrow);
+        this.spawnArrow(arrow, true);
+        this.undosUsed++;
+        this.updateCounter(true);
+        this.refreshFreeLift();
+        playSound(this, 'tap');
+      }
+
+      this.undoButton.setEnabled(this.history.length > 0);
+    } finally {
       this.busy = false;
-      return;
     }
-
-    const arrow = this.history.pop();
-    if (arrow) {
-      this.board.arrows.push(arrow);
-      this.spawnArrow(arrow, true);
-      this.undosUsed++;
-      this.updateCounter(true);
-      this.refreshFreeLift();
-      playSound(this, 'tap');
-    }
-
-    this.undoButton.setEnabled(this.history.length > 0);
-    this.busy = false;
   }
 
   private async onHint(): Promise<void> {
@@ -1793,14 +1912,16 @@ export class LevelScene extends Phaser.Scene {
     }
 
     this.busy = true;
-    if (!(await this.spendTool('hint'))) {
+    let paid = false;
+    try {
+      paid = await this.spendTool('hint');
+    } finally {
       this.busy = false;
-      return;
     }
+    if (!paid) return;
 
     this.hintsUsed++;
     this.highlight(free[0]!);
-    this.busy = false;
   }
 
   private highlight(arrow: Arrow): void {
@@ -1888,6 +2009,24 @@ export class LevelScene extends Phaser.Scene {
   }
 
   // ------------------------------------------------------------ fail state
+
+  /**
+   * A fail that lands while another modal has the screen is swallowed by
+   * showFailOverlay's guard, so every path that closes a modal calls this to
+   * let the swallowed fail through.
+   */
+  private reattemptFail(): void {
+    if (this.finished || this.failed || this.overlayLayer) return;
+    if (this.timedOut) this.showFailOverlay(true);
+    else if (this.hearts === 0) this.showFailOverlay(false);
+  }
+
+  /** The init() payload that reproduces this exact level on a restart. */
+  private restartPayload(): { global?: number; boss?: number; daily?: boolean } {
+    if (this.special?.kind === 'boss') return { boss: this.special.chapter };
+    if (this.special) return { daily: true };
+    return { global: this.ref.global };
+  }
 
   /**
    * The rescue modal, in both its flavours.
@@ -2003,7 +2142,7 @@ export class LevelScene extends Phaser.Scene {
         variant: 'plain',
         fontSize: 22,
         radius: 31,
-        onClick: () => this.scene.restart({ global: this.ref.global }),
+        onClick: () => this.scene.restart(this.restartPayload()),
       }),
     );
 
@@ -2016,6 +2155,13 @@ export class LevelScene extends Phaser.Scene {
       this.secondsLeft += TIME_REFILL;
       this.timedOut = false;
       this.updateTimer();
+      // A clock rescue can find the hearts already gone, and loseHeart's
+      // guard would then make every further mistake free. Back to one.
+      if (this.hearts === 0) {
+        this.hearts = 1;
+        const g = this.hearts3[0];
+        if (g) this.tweens.add({ targets: g, scale: 1, alpha: 1, duration: 240, ease: 'Back.easeOut' });
+      }
     } else {
       this.refillHearts();
     }
@@ -2024,6 +2170,9 @@ export class LevelScene extends Phaser.Scene {
     const layer = this.overlayLayer;
     this.overlayLayer = null;
     if (layer) {
+      // The card lingers for its fade, and a second tap in that window must
+      // find every control dead - one rescue must never be paid for twice.
+      for (const child of layer.list) child.disableInteractive();
       this.tweens.add({
         targets: layer,
         alpha: 0,
@@ -2033,6 +2182,9 @@ export class LevelScene extends Phaser.Scene {
       });
     }
     getSdk().gameplayStart();
+    // The board can empty while the fail modal is up (a last arrow's flight
+    // outlives its tap); that flight's checkWin was refused, so ask again.
+    this.checkWin();
   }
 
   /** In-level settings: sound, and the two ways out. */
@@ -2057,6 +2209,7 @@ export class LevelScene extends Phaser.Scene {
     const close = () => {
       this.overlayLayer = null;
       layer.destroy();
+      this.reattemptFail();
       if (!this.failed && !this.finished) getSdk().gameplayStart();
     };
 
@@ -2146,7 +2299,7 @@ export class LevelScene extends Phaser.Scene {
         variant: 'primary',
         fontSize: 26,
         radius: 38,
-        onClick: () => this.scene.restart({ global: this.ref.global }),
+        onClick: () => this.scene.restart(this.restartPayload()),
       }),
     );
 
@@ -2171,20 +2324,27 @@ export class LevelScene extends Phaser.Scene {
   private async onRefill(outOfTime = false): Promise<void> {
     if (this.busy) return;
     this.busy = true;
-    const granted = await getSdk().showRewarded();
-    this.busy = false;
+    let granted = false;
+    try {
+      granted = await this.showRewarded();
+    } finally {
+      this.busy = false;
+    }
 
     if (!granted) {
       toast(this, t('adFailed'), COLORS.danger);
       return;
     }
+    // The rescue may already have been bought with coins - or the level
+    // restarted - while the video played; never grant it twice.
+    if (this.finished || !this.failed) return;
     this.grantRescue(outOfTime);
   }
 
   // -------------------------------------------------------------------- win
 
   private checkWin(): void {
-    if (this.finished || this.board.arrows.length > 0) return;
+    if (this.finished || this.failed || this.timedOut || this.board.arrows.length > 0) return;
     this.finished = true;
     this.stopTimerPulse();
 
@@ -2199,6 +2359,20 @@ export class LevelScene extends Phaser.Scene {
     });
 
     this.time.delayedCall(950, () => {
+      // Specials never touch recordWin or the unlock counter: their reward
+      // and any once-only bookkeeping live in record*Win, called here so the
+      // Win scene can simply display what was actually granted.
+      if (this.special?.kind === 'boss') {
+        const chapter = this.special.chapter;
+        const reward = progress.recordBossWin(chapter);
+        this.scene.start('Win', { special: 'boss', chapter, reward });
+        return;
+      }
+      if (this.special) {
+        const reward = progress.recordDailyWin();
+        this.scene.start('Win', { special: 'daily', reward, streak: progress.dailyStreak() });
+        return;
+      }
       this.scene.start('Win', {
         global: this.ref.global,
         stars,

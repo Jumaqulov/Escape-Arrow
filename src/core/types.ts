@@ -85,6 +85,12 @@ export const PACK_VERSION = 2;
 export interface LevelPack {
   version: number;
   chapters: Chapter[];
+  /**
+   * One oversized boss board per chapter, index-aligned with `chapters`.
+   * Optional so packs written before bosses existed still parse; parsePack
+   * normalizes an absent list to [].
+   */
+  boss?: LevelData[];
 }
 
 /** Runtime guard for untrusted direction characters. */

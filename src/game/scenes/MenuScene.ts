@@ -1,7 +1,7 @@
 /** Title screen: logo card, one big indigo PLAY, settings behind the gear. */
 import Phaser from 'phaser';
 import { COLORS, FONT, applyChapterPalette, columnBounds, hex } from '../theme';
-import { Button, IconButton, buildLogoCard, drawStar, iconGear, ambientBackdrop } from '../ui';
+import { Button, IconButton, buildLogoCard, drawFlame, drawStar, iconGear, ambientBackdrop } from '../ui';
 import { progress } from '../progress';
 import { TOTAL_LEVELS, refByGlobal } from '../levels';
 import { t } from '../i18n';
@@ -70,7 +70,38 @@ export class MenuScene extends Phaser.Scene {
       onClick: () => this.scene.start('LevelSelect'),
     });
 
-    this.buildStarCounter(width / 2, height * 0.81);
+    // Shop and Daily share one row: two half-width buttons keep the column
+    // from growing into a tower of full-width pills.
+    const half = (buttonWidth - 14) / 2;
+
+    new Button(this, {
+      x: width / 2 - half / 2 - 7,
+      y: height * 0.805,
+      width: half,
+      height: 72,
+      label: t('shop'),
+      variant: 'plain',
+      fontSize: 24,
+      onClick: () => this.scene.start('Shop'),
+    });
+
+    // Replay stays open after today's win - progress guards the reward - but
+    // the button drops to the plain skin so it stops asking to be pressed.
+    const dailyOpen = progress.canPlayDaily();
+    const daily = new Button(this, {
+      x: width / 2 + half / 2 + 7,
+      y: height * 0.805,
+      width: half,
+      height: 72,
+      label: dailyOpen ? t('daily') : t('dailyDone'),
+      variant: dailyOpen ? 'soft' : 'plain',
+      fontSize: dailyOpen ? 24 : 19,
+      onClick: () => this.scene.start('Level', { daily: true }),
+    });
+    const streak = progress.dailyStreak();
+    if (streak > 0) daily.add(this.buildStreakPill(streak, half, 72));
+
+    this.buildStarCounter(width / 2, height * 0.875);
 
     this.add
       .text(width / 2, height - 40, t('privacy'), {
@@ -83,6 +114,40 @@ export class MenuScene extends Phaser.Scene {
       .on('pointerup', () => {
         window.open(`${import.meta.env.BASE_URL}privacy.html`, '_blank', 'noopener');
       });
+  }
+
+  /**
+   * Flame-and-count pill riding the daily button's top-right corner, the same
+   * perch the AD badge uses. Built here rather than via `badge` because the
+   * badge is text-only and the streak needs its flame to read at a glance.
+   */
+  private buildStreakPill(streak: number, width: number, height: number): Phaser.GameObjects.Container {
+    const layer = this.add.container(width / 2 - 16, -height / 2 + 6);
+
+    const text = this.add
+      .text(0, 0, String(streak), {
+        fontFamily: FONT,
+        fontSize: '15px',
+        color: hex(COLORS.card),
+        fontStyle: '800',
+      })
+      .setOrigin(0, 0.5);
+
+    const flame = 17;
+    const padX = 10;
+    const gap = 5;
+    const w = padX * 2 + flame + gap + text.width;
+    const h = 26;
+
+    const g = this.add.graphics();
+    g.fillStyle(COLORS.amber, 1);
+    g.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2);
+    drawFlame(g, -w / 2 + padX + flame / 2, 0, flame, COLORS.card);
+    text.setX(-w / 2 + padX + flame + gap);
+
+    layer.add(g);
+    layer.add(text);
+    return layer;
   }
 
   private buildStarCounter(x: number, y: number): void {

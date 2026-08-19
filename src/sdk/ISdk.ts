@@ -31,6 +31,20 @@ export interface SaveData {
   dragSensitivity: number;
   /** Has the zoom coach mark been shown once? */
   seenZoomHint: boolean;
+  /** Purchased arrow skin ids; 'classic' is free and never stored here. */
+  skins: string[];
+  /** The arrow skin currently applied. */
+  skin: string;
+  /** Purchased palette indices; palette 0 is free and never stored here. */
+  themes: number[];
+  /** Forced palette index, or -1 for the automatic per-chapter palette. */
+  themeChoice: number;
+  /** Daily challenge: local date (YYYY-MM-DD) of the last win, and the run. */
+  daily: { lastWin: string; streak: number };
+  /** Chapters whose boss level has been beaten (reward paid once each). */
+  boss: number[];
+  /** Epoch ms when this save was written; the newest copy wins cloud vs local. */
+  savedAt?: number;
 }
 
 export type Platform = 'yandex' | 'crazygames' | 'stub';
@@ -59,6 +73,12 @@ export interface ISdk {
   save(data: SaveData): Promise<void>;
   load(): Promise<SaveData | null>;
 
+  /**
+   * Post the player's score to the portal leaderboard, fire-and-forget.
+   * Portals without a leaderboard API simply omit this.
+   */
+  submitScore?(score: number): void;
+
   /** Portal UI language, used as the initial i18n choice. */
   getLang(): string;
 
@@ -66,7 +86,7 @@ export interface ISdk {
   vibrate(pattern: number | number[]): void;
 }
 
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 export function defaultSave(): SaveData {
   return {
@@ -82,6 +102,12 @@ export function defaultSave(): SaveData {
     seenTools: [],
     dragSensitivity: 1,
     seenZoomHint: false,
+    skins: [],
+    skin: 'classic',
+    themes: [],
+    themeChoice: -1,
+    daily: { lastWin: '', streak: 0 },
+    boss: [],
   };
 }
 
@@ -135,6 +161,10 @@ export const stubSdk: ISdk = {
     } catch {
       return null;
     }
+  },
+
+  submitScore(score: number): void {
+    console.info('[sdk:stub] submitScore', score);
   },
 
   getLang(): string {

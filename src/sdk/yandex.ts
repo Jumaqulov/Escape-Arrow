@@ -7,14 +7,29 @@ import { defaultSave } from './ISdk';
 
 const SAVE_KEY = 'arrowEscape';
 const LOCAL_MIRROR = 'arrow-escape-save';
+const LEADERBOARD = 'stars';
+
+/**
+ * Leaderboards are not in our ambient YaSdk stubs and not every Yandex build
+ * exposes them, so the shape lives here and the call is feature-detected.
+ */
+interface YaLeaderboards {
+  setLeaderboardScore?(boardName: string, score: number): Promise<unknown>;
+}
+
+type YaSdkWithBoards = YaSdk & { getLeaderboards?: () => Promise<YaLeaderboards | null> };
 
 let ysdk: YaSdk | null = null;
 let player: YaPlayer | null = null;
 let loadingSignalled = false;
 let gameplayRunning = false;
 
-/** Never let a portal callback that forgets to fire wedge the game. */
-function withTimeout<T>(build: (resolve: (value: T) => void) => void, ms: number, fallback: T): Promise<T> {
+/**
+ * Never let a portal callback that forgets to fire wedge the game. The
+ * fallback is a thunk so the watchdog reports state as of the timeout - a
+ * reward earned before the deadline must survive a missing onClose.
+ */
+function withTimeout<T>(build: (resolve: (value: T) => void) => void, ms: number, fallback: () => T): Promise<T> {
   return new Promise<T>((resolve) => {
     let settled = false;
     const done = (value: T): void => {
@@ -22,7 +37,7 @@ function withTimeout<T>(build: (resolve: (value: T) => void) => void, ms: number
       settled = true;
       resolve(value);
     };
-    const timer = setTimeout(() => done(fallback), ms);
+    const timer = setTimeout(() => done(fallback()), ms);
     build((value) => {
       clearTimeout(timer);
       done(value);
@@ -30,15 +45,22 @@ function withTimeout<T>(build: (resolve: (value: T) => void) => void, ms: number
   });
 }
 
+/** Bound a bare portal promise; rejections still propagate to the caller. */
+function bounded<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([promise, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
+}
+
 export const yandexSdk: ISdk = {
   platform: 'yandex',
 
   async init(): Promise<void> {
     try {
-      ysdk = (await window.YaGames?.init()) ?? null;
+      const connect = window.YaGames?.init();
+      ysdk = connect ? await bounded<YaSdk | null>(connect, 6000, null) : null;
       window.ysdk = ysdk ?? undefined;
       try {
-        player = await ysdk?.getPlayer({ scopes: false }) ?? null;
+        const fetchPlayer = ysdk?.getPlayer({ scopes: false });
+        player = fetchPlayer ? await bounded<YaPlayer | null>(fetchPlayer, 6000, null) : null;
       } catch {
         player = null; // Anonymous player: fall back to localStorage.
       }
@@ -89,18 +111,24 @@ export const yandexSdk: ISdk = {
 
     await withTimeout<void>(
       (resolve) => {
-        ysdk?.adv.showFullscreenAdv({
-          callbacks: {
-            onClose: () => resolve(),
-            onError: (error) => {
-              console.warn('[sdk:yandex] interstitial error', error);
-              resolve();
+        try {
+          ysdk?.adv.showFullscreenAdv({
+            callbacks: {
+              onClose: () => resolve(),
+              onError: (error) => {
+                console.warn('[sdk:yandex] interstitial error', error);
+                resolve();
+              },
             },
-          },
-        });
+          });
+        } catch (error) {
+          console.warn('[sdk:yandex] interstitial error', error);
+          resolve();
+        }
       },
-      20000,
-      undefined,
+      // Unskippable interstitials legitimately run well past 20s.
+      60000,
+      () => undefined,
     );
 
     if (wasPlaying) this.gameplayStart();
@@ -118,21 +146,26 @@ export const yandexSdk: ISdk = {
     let rewarded = false;
     const result = await withTimeout<boolean>(
       (resolve) => {
-        ysdk?.adv.showRewardedVideo({
-          callbacks: {
-            onRewarded: () => {
-              rewarded = true;
+        try {
+          ysdk?.adv.showRewardedVideo({
+            callbacks: {
+              onRewarded: () => {
+                rewarded = true;
+              },
+              onClose: () => resolve(rewarded),
+              onError: (error) => {
+                console.warn('[sdk:yandex] rewarded error', error);
+                resolve(false);
+              },
             },
-            onClose: () => resolve(rewarded),
-            onError: (error) => {
-              console.warn('[sdk:yandex] rewarded error', error);
-              resolve(false);
-            },
-          },
-        });
+          });
+        } catch (error) {
+          console.warn('[sdk:yandex] rewarded error', error);
+          resolve(false);
+        }
       },
       60000,
-      false,
+      () => rewarded,
     );
 
     if (wasPlaying) this.gameplayStart();
@@ -153,18 +186,39 @@ export const yandexSdk: ISdk = {
   },
 
   async load(): Promise<SaveData | null> {
+    let cloud: SaveData | null = null;
     try {
-      const cloud = await player?.getData([SAVE_KEY]);
-      const value = cloud?.[SAVE_KEY];
-      if (value && typeof value === 'object') return { ...defaultSave(), ...(value as SaveData) };
+      const data = player
+        ? await bounded<Record<string, unknown> | null>(player.getData([SAVE_KEY]), 6000, null)
+        : null;
+      const value = data?.[SAVE_KEY];
+      if (value && typeof value === 'object') cloud = { ...defaultSave(), ...(value as SaveData) };
     } catch (error) {
       console.warn('[sdk:yandex] cloud load failed, using local mirror', error);
     }
+    let local: SaveData | null = null;
     try {
       const raw = localStorage.getItem(LOCAL_MIRROR);
-      return raw ? (JSON.parse(raw) as SaveData) : null;
+      if (raw) local = JSON.parse(raw) as SaveData;
     } catch {
-      return null;
+      /* storage disabled */
+    }
+    // The cloud can serve a stale snapshot after offline play: whichever copy
+    // was written last wins, so it never rolls back the local mirror.
+    if (cloud && local) return (local.savedAt ?? 0) > (cloud.savedAt ?? 0) ? local : cloud;
+    return cloud ?? local;
+  },
+
+  submitScore(score: number): void {
+    // Fire and forget: an anonymous player or missing leaderboard rejects
+    // here, and none of that may ever surface as a gameplay error.
+    try {
+      const boards = (ysdk as YaSdkWithBoards | null)?.getLeaderboards?.();
+      void boards
+        ?.then((lb) => lb?.setLeaderboardScore?.(LEADERBOARD, Math.max(0, Math.floor(score))))
+        .catch((error) => console.warn('[sdk:yandex] leaderboard submit failed', error));
+    } catch (error) {
+      console.warn('[sdk:yandex] leaderboard submit failed', error);
     }
   },
 

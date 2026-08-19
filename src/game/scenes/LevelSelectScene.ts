@@ -1,14 +1,18 @@
 /** Chapter picker + 5x10 level grid with star counts and locks. */
 import Phaser from 'phaser';
 import { COLORS, FONT, RADIUS, applyChapterPalette, columnBounds, hex } from '../theme';
-import { IconButton, addTitle, drawCard, drawShadow, drawStar, iconBack, iconLock, setCenteredHitArea, ambientBackdrop } from '../ui';
-import { progress } from '../progress';
+import { IconButton, addTitle, drawCard, drawShadow, drawStar, iconBack, iconCheck, iconCrown, iconLock, setCenteredHitArea, ambientBackdrop } from '../ui';
+import { progress, BOSS_GATE } from '../progress';
 import { CHAPTERS, globalIndex } from '../levels';
 import { chapterName, t } from '../i18n';
 
 const COLS = 5;
-const CELL = 84;
+// 82, not 84: ten cell rows plus the boss row below them have to clear the
+// 1280 design height with the panel's padding intact.
+const CELL = 82;
 const GAP = 12;
+/** Height of the full-width boss tile under the grid. */
+const BOSS_ROW = 84;
 
 export class LevelSelectScene extends Phaser.Scene {
   private chapter = 0;
@@ -115,13 +119,14 @@ export class LevelSelectScene extends Phaser.Scene {
 
     const rows = Math.ceil(chapter.levels.length / COLS);
     const gridWidth = COLS * CELL + (COLS - 1) * GAP;
-    const gridHeight = rows * CELL + (rows - 1) * GAP;
+    const cellsHeight = rows * CELL + (rows - 1) * GAP;
     // Centred on the canvas, never anchored to a corner.
     const startX = (width - gridWidth) / 2;
-    const startY = 222;
+    const startY = 216;
 
     const panel = this.add.graphics();
-    drawCard(panel, startX - 22, startY - 22, gridWidth + 44, gridHeight + 44, RADIUS.card);
+    // The panel wraps the cells plus the boss row that closes the chapter.
+    drawCard(panel, startX - 22, startY - 22, gridWidth + 44, cellsHeight + GAP + BOSS_ROW + 44, RADIUS.card);
     this.gridLayer.add(panel);
 
     chapter.levels.forEach((level, index) => {
@@ -131,6 +136,79 @@ export class LevelSelectScene extends Phaser.Scene {
       const y = startY + row * (CELL + GAP) + CELL / 2;
       this.gridLayer.add(this.buildCell(x, y, index, level.id));
     });
+
+    this.gridLayer.add(
+      this.buildBossTile(startX + gridWidth / 2, startY + cellsHeight + GAP + BOSS_ROW / 2, gridWidth),
+    );
+  }
+
+  /** Full-width boss row under the grid: locked, open, or cleared-and-replayable. */
+  private buildBossTile(x: number, y: number, width: number): Phaser.GameObjects.Container {
+    const container = this.add.container(x, y);
+    const stars = progress.chapterStars(this.chapter);
+    const cleared = progress.bossCleared(this.chapter);
+    const open = stars >= BOSS_GATE;
+
+    const bg = this.add.graphics();
+    // Open goes full ink, cleared drops to accent: the one tile on the panel
+    // that is about to matter is the one that shouts loudest.
+    const fill = !open ? COLORS.locked : cleared ? COLORS.accent : COLORS.ink;
+    if (open) drawShadow(bg, -width / 2, -BOSS_ROW / 2, width, BOSS_ROW, RADIUS.tile, 5, 2);
+    bg.fillStyle(fill, 1);
+    bg.fillRoundedRect(-width / 2, -BOSS_ROW / 2, width, BOSS_ROW, RADIUS.tile);
+    container.add(bg);
+
+    const crown = this.add.graphics();
+    iconCrown(crown, 46, open ? COLORS.amber : COLORS.lockInk, 4);
+    crown.setPosition(-width / 2 + 54, 2);
+    container.add(crown);
+
+    if (!open) {
+      container.add(
+        this.add
+          .text(10, 0, t('bossLocked', BOSS_GATE - stars), {
+            fontFamily: FONT,
+            fontSize: '22px',
+            color: hex(COLORS.lockInk),
+            fontStyle: 'bold',
+          })
+          .setOrigin(0.5),
+      );
+      const lock = this.add.graphics();
+      iconLock(lock, 24, COLORS.lockInk, 3.5);
+      lock.setPosition(width / 2 - 48, 0);
+      container.add(lock);
+      return container;
+    }
+
+    container.add(
+      this.add
+        .text(10, 0, t('boss'), {
+          fontFamily: FONT,
+          fontSize: '30px',
+          color: hex(COLORS.card),
+          fontStyle: '800',
+        })
+        .setOrigin(0.5)
+        .setLetterSpacing(6),
+    );
+
+    if (cleared) {
+      // Beaten but replayable: the tick says done, the live hit area says again.
+      const check = this.add.graphics();
+      check.fillStyle(COLORS.card, 1);
+      check.fillCircle(0, 0, 17);
+      iconCheck(check, 22, COLORS.ok, 4);
+      check.setPosition(width / 2 - 48, 0);
+      container.add(check);
+    }
+
+    setCenteredHitArea(container, width, BOSS_ROW);
+    container.on('pointerup', () => {
+      this.scene.start('Level', { boss: this.chapter });
+    });
+
+    return container;
   }
 
   private buildCell(x: number, y: number, index: number, displayId: number): Phaser.GameObjects.Container {

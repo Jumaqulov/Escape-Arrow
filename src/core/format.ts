@@ -96,6 +96,12 @@ export function parsePack(source: LevelPack | string): LevelPack {
       throw new Error('parsePack: malformed chapter, expected { name, levels: [...] }');
     }
   }
+  // Boss boards arrived after the first packs shipped: absent means none.
+  if (pack.boss === undefined) {
+    pack.boss = [];
+  } else if (!Array.isArray(pack.boss)) {
+    throw new Error('parsePack: malformed pack, "boss" must be an array of levels');
+  }
   return pack;
 }
 
@@ -107,5 +113,8 @@ export function serializePack(pack: LevelPack): string {
       return `    {\n      "name": ${JSON.stringify(chapter.name)},\n      "levels": [\n${levels}\n      ]\n    }`;
     })
     .join(',\n');
-  return `{\n  "version": ${PACK_VERSION},\n  "chapters": [\n${chapters}\n  ]\n}\n`;
+  const boss = pack.boss?.length
+    ? `,\n  "boss": [\n${pack.boss.map((lvl) => `    ${JSON.stringify(lvl)}`).join(',\n')}\n  ]`
+    : '';
+  return `{\n  "version": ${PACK_VERSION},\n  "chapters": [\n${chapters}\n  ]${boss}\n}\n`;
 }

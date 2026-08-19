@@ -381,14 +381,60 @@ export const iconClose: IconDrawer = (g, s, color, lw) => {
   stroke(g, a, -a, -a, a, color, lw);
 };
 
+/**
+ * Three-spike crown, filled - the boss mark. Filled rather than stroked: at
+ * tile size a stroked crown collapses into scribble, a silhouette stays a
+ * crown down to ~20px.
+ */
+export const iconCrown: IconDrawer = (g, s, color, _lw) => {
+  const w = s * 0.46;
+  const base = s * 0.3;
+  const dip = s * 0.02;
+  g.fillStyle(color, 1);
+  g.fillPoints(
+    [
+      new Phaser.Geom.Point(-w, base),
+      new Phaser.Geom.Point(-w, -s * 0.16),
+      new Phaser.Geom.Point(-w * 0.42, dip),
+      new Phaser.Geom.Point(0, -s * 0.34),
+      new Phaser.Geom.Point(w * 0.42, dip),
+      new Phaser.Geom.Point(w, -s * 0.16),
+      new Phaser.Geom.Point(w, base),
+    ],
+    true,
+  );
+  // Jewels on the spikes lift it from "zigzag" to "crown".
+  g.fillCircle(-w, -s * 0.22, s * 0.07);
+  g.fillCircle(0, -s * 0.4, s * 0.07);
+  g.fillCircle(w, -s * 0.22, s * 0.07);
+};
+
+/** Tick mark, round-capped like every other stroke in the game. */
+export const iconCheck: IconDrawer = (g, s, color, lw) => {
+  stroke(g, -s * 0.3, s * 0.02, -s * 0.08, s * 0.24, color, lw);
+  stroke(g, -s * 0.08, s * 0.24, s * 0.32, -s * 0.22, color, lw);
+};
+
 /** Gold coin with a rim, centred on (x,y). */
 export function drawCoin(g: Phaser.GameObjects.Graphics, x: number, y: number, radius: number): void {
-  g.fillStyle(0xd98c1a, 1);
+  // A chunky cartoon coin: visible edge thickness below, a minted ring
+  // embossed into the face, a crescent glint and one sparkle. All of it is
+  // proportional to `radius`, so the same coin reads at 13px and at 24px.
+  g.fillStyle(0xb26a14, 1);
+  g.fillCircle(x, y + radius * 0.14, radius);
+  g.fillStyle(0xe8940f, 1);
   g.fillCircle(x, y, radius);
-  g.fillStyle(COLORS.amber, 1);
-  g.fillCircle(x, y, radius * 0.82);
-  g.fillStyle(0xffd97a, 1);
-  g.fillCircle(x - radius * 0.22, y - radius * 0.24, radius * 0.3);
+  g.fillStyle(0xffbe2e, 1);
+  g.fillCircle(x, y, radius * 0.78);
+  // Glint: a light disc mostly overdrawn back to face gold leaves a crescent.
+  g.fillStyle(0xffe08c, 1);
+  g.fillCircle(x - radius * 0.1, y - radius * 0.1, radius * 0.62);
+  g.fillStyle(0xffbe2e, 1);
+  g.fillCircle(x + radius * 0.02, y + radius * 0.06, radius * 0.6);
+  g.lineStyle(Math.max(1.5, radius * 0.11), 0xe8940f, 1);
+  g.strokeCircle(x, y, radius * 0.55);
+  g.fillStyle(0xfff6dc, 1);
+  g.fillCircle(x - radius * 0.34, y - radius * 0.4, radius * 0.13);
 }
 
 /**
@@ -456,6 +502,26 @@ export function drawHeart(
   g.fillCircle(x - r * 0.5, y - r * 0.32, r * 0.6);
   g.fillCircle(x + r * 0.5, y - r * 0.32, r * 0.6);
   g.fillTriangle(x - r * 1.05, y - r * 0.1, x + r * 1.05, y - r * 0.1, x, y + r * 1.05);
+}
+
+/**
+ * Teardrop flame for the daily-streak counter, centred on (x,y) inside a
+ * `size` box. One colour: the caller draws a second, smaller flame on top when
+ * it wants the lit-core look.
+ */
+export function drawFlame(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  size: number,
+  color: number,
+): void {
+  const r = size * 0.32;
+  const baseY = y + size * 0.16;
+  g.fillStyle(color, 1);
+  g.fillCircle(x, baseY, r);
+  // Tip leans a touch right so the drop reads as fire, not as a raindrop.
+  g.fillTriangle(x - r, baseY, x + r, baseY, x + size * 0.08, y - size * 0.48);
 }
 
 /** Tapping hand used by the level 1 tutorial. */

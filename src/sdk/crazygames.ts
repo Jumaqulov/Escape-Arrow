@@ -12,13 +12,19 @@ let sdk: CrazySdk | null = null;
 let loadingSignalled = false;
 let gameplayRunning = false;
 
+/** Bound a bare portal promise; rejections still propagate to the caller. */
+function bounded<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([promise, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
+}
+
 export const crazyGamesSdk: ISdk = {
   platform: 'crazygames',
 
   async init(): Promise<void> {
     try {
       sdk = window.CrazyGames?.SDK ?? null;
-      await sdk?.init();
+      const connect = sdk?.init();
+      if (connect) await bounded<void>(connect, 6000, undefined);
       try {
         sdk?.game.loadingStart();
       } catch {
@@ -76,18 +82,25 @@ export const crazyGamesSdk: ISdk = {
         settled = true;
         resolve();
       };
-      const timer = setTimeout(finish, 20000);
-      sdk?.ad.requestAd('midgame', {
-        adFinished: () => {
-          clearTimeout(timer);
-          finish();
-        },
-        adError: (error) => {
-          console.warn('[sdk:crazygames] interstitial error', error);
-          clearTimeout(timer);
-          finish();
-        },
-      });
+      // Unskippable interstitials legitimately run well past 20s.
+      const timer = setTimeout(finish, 60000);
+      try {
+        sdk?.ad.requestAd('midgame', {
+          adFinished: () => {
+            clearTimeout(timer);
+            finish();
+          },
+          adError: (error) => {
+            console.warn('[sdk:crazygames] interstitial error', error);
+            clearTimeout(timer);
+            finish();
+          },
+        });
+      } catch (error) {
+        console.warn('[sdk:crazygames] interstitial error', error);
+        clearTimeout(timer);
+        finish();
+      }
     });
 
     if (wasPlaying) this.gameplayStart();
@@ -103,24 +116,34 @@ export const crazyGamesSdk: ISdk = {
     }
 
     const rewarded = await new Promise<boolean>((resolve) => {
+      let earned = false;
       let settled = false;
       const finish = (value: boolean): void => {
         if (settled) return;
         settled = true;
         resolve(value);
       };
-      const timer = setTimeout(() => finish(false), 60000);
-      sdk?.ad.requestAd('rewarded', {
-        adFinished: () => {
-          clearTimeout(timer);
-          finish(true);
-        },
-        adError: (error) => {
-          console.warn('[sdk:crazygames] rewarded error', error);
-          clearTimeout(timer);
-          finish(false);
-        },
-      });
+      // The watchdog reads the flag at timeout time so an earned reward is
+      // never thrown away by a late-firing callback.
+      const timer = setTimeout(() => finish(earned), 60000);
+      try {
+        sdk?.ad.requestAd('rewarded', {
+          adFinished: () => {
+            earned = true;
+            clearTimeout(timer);
+            finish(true);
+          },
+          adError: (error) => {
+            console.warn('[sdk:crazygames] rewarded error', error);
+            clearTimeout(timer);
+            finish(false);
+          },
+        });
+      } catch (error) {
+        console.warn('[sdk:crazygames] rewarded error', error);
+        clearTimeout(timer);
+        finish(false);
+      }
     });
 
     if (wasPlaying) this.gameplayStart();
