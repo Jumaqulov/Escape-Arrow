@@ -258,38 +258,59 @@ export const iconMagnifier: IconDrawer = (g, s, color, lw) => {
   const r = s * 0.3;
   const cx = -s * 0.09;
   const cy = -s * 0.09;
-  g.lineStyle(lw, color, 1);
-  g.strokeCircle(cx, cy, r);
   const k = Math.SQRT1_2;
-  stroke(g, cx + r * k, cy + r * k, s * 0.44, s * 0.44, color, lw);
+  // Chunky handle first, so the lens ring overlaps its root.
+  stroke(g, cx + r * k, cy + r * k, s * 0.46, s * 0.46, darken(color, 0.25), lw * 1.7);
+  // Filled ring with a pane of glass and a glint - a toy, not a diagram.
+  g.fillStyle(color, 1);
+  g.fillCircle(cx, cy, r + lw * 0.4);
+  g.fillStyle(0xffffff, 0.9);
+  g.fillCircle(cx, cy, r - lw * 0.5);
+  g.fillStyle(color, 0.15);
+  g.fillCircle(cx, cy, r - lw * 0.5);
+  g.fillStyle(0xffffff, 0.95);
+  g.fillCircle(cx - r * 0.3, cy - r * 0.32, r * 0.18);
 };
 
 /** Tilted eraser block - the Eraser tool. */
 export const iconEraser: IconDrawer = (g, s, color, lw) => {
-  const w = s * 0.72;
-  const h = s * 0.46;
-  g.lineStyle(lw, color, 1);
-  g.strokeRoundedRect(-w / 2, -h / 2, w, h, s * 0.1);
-  g.lineBetween(w * 0.04, -h / 2, w * 0.04, h / 2);
+  const w = s * 0.74;
+  const h = s * 0.5;
+  const rad = s * 0.11;
+  // Two-tone block: coloured sleeve on the left, pale rubber on the right.
+  g.fillStyle(color, 1);
+  g.fillRoundedRect(-w / 2, -h / 2, w, h, rad);
+  g.fillStyle(0xffffff, 0.72);
+  g.fillRoundedRect(w * 0.04, -h / 2, w / 2 - w * 0.04, h, { tl: 0, bl: 0, tr: rad, br: rad });
+  g.lineStyle(lw * 0.65, darken(color, 0.35), 1);
+  g.strokeRoundedRect(-w / 2, -h / 2, w, h, rad);
+  // Shine along the sleeve's top edge.
+  g.fillStyle(0xffffff, 0.5);
+  g.fillRoundedRect(-w / 2 + s * 0.05, -h / 2 + s * 0.045, w * 0.32, h * 0.24, h * 0.12);
   g.setAngle(-32);
 };
 
 /** Curved arrow doubling back to the left. */
 export const iconUndo: IconDrawer = (g, s, color, lw) => {
-  const r = s * 0.32;
-  const cy = s * 0.1;
+  const r = s * 0.3;
+  const cy = s * 0.08;
+  const thick = lw * 1.7;
 
-  g.lineStyle(lw, color, 1);
+  g.lineStyle(thick, color, 1);
   g.beginPath();
   g.arc(0, cy, r, Math.PI, 0, false);
   g.strokePath();
 
-  // Right end drops straight down, so the curve reads as a return stroke.
-  stroke(g, r, cy, r, cy + s * 0.22, color, lw);
+  // Right end drops straight down, so the curve reads as a return stroke;
+  // a hand-drawn round cap closes it.
+  stroke(g, r, cy, r, cy + s * 0.2, color, thick);
   g.fillStyle(color, 1);
-  g.fillCircle(-r, cy, lw / 2);
+  g.fillCircle(r, cy + s * 0.2, thick / 2);
 
-  arrowTip(g, -r, cy + lw * 0.1, 90, s * 0.26, s * 0.2, color);
+  // A fat head caps the left end, and a glint rides the crown of the curve.
+  arrowTip(g, -r, cy + lw * 0.2, 90, s * 0.34, s * 0.28, color);
+  g.fillStyle(0xffffff, 0.6);
+  g.fillCircle(0, cy - r, thick * 0.26);
 };
 
 /** Full circular arrow. */
@@ -325,24 +346,34 @@ export const iconGear: IconDrawer = (g, s, color, lw) => {
 };
 
 function magnifierBody(g: Phaser.GameObjects.Graphics, s: number, color: number, lw: number): void {
-  const r = s * 0.28;
-  const cx = -s * 0.08;
-  const cy = -s * 0.08;
-  g.lineStyle(lw, color, 1);
-  g.strokeCircle(cx, cy, r);
+  const r = s * 0.33;
+  const cx = -s * 0.07;
+  const cy = -s * 0.07;
   const k = Math.SQRT1_2;
-  stroke(g, cx + r * k, cy + r * k, s * 0.42, s * 0.42, color, lw);
+  // Same toy-magnifier treatment as iconMagnifier, but tuned for the small
+  // zoom buttons: a bigger pane and a slimmer handle, or the whole glyph
+  // collapses into a blob at 48px.
+  stroke(g, cx + r * k, cy + r * k, s * 0.46, s * 0.46, darken(color, 0.25), lw * 1.15);
+  g.fillStyle(color, 1);
+  g.fillCircle(cx, cy, r + lw * 0.3);
+  g.fillStyle(0xffffff, 0.95);
+  g.fillCircle(cx, cy, r - lw * 0.5);
+  g.fillStyle(color, 0.1);
+  g.fillCircle(cx, cy, r - lw * 0.5);
+  // A glint so the pane reads as glass even this small.
+  g.fillStyle(0xffffff, 0.95);
+  g.fillCircle(cx - r * 0.34, cy - r * 0.36, r * 0.16);
 }
 
 export const iconZoomIn: IconDrawer = (g, s, color, lw) => {
   magnifierBody(g, s, color, lw);
-  stroke(g, -s * 0.22, -s * 0.08, s * 0.06, -s * 0.08, color, lw * 0.8);
-  stroke(g, -s * 0.08, -s * 0.22, -s * 0.08, s * 0.06, color, lw * 0.8);
+  stroke(g, -s * 0.18, -s * 0.07, s * 0.04, -s * 0.07, color, lw * 0.95);
+  stroke(g, -s * 0.07, -s * 0.18, -s * 0.07, s * 0.04, color, lw * 0.95);
 };
 
 export const iconZoomOut: IconDrawer = (g, s, color, lw) => {
   magnifierBody(g, s, color, lw);
-  stroke(g, -s * 0.22, -s * 0.08, s * 0.06, -s * 0.08, color, lw * 0.8);
+  stroke(g, -s * 0.18, -s * 0.07, s * 0.04, -s * 0.07, color, lw * 0.95);
 };
 
 export const iconBack: IconDrawer = (g, s, color, lw) => {
@@ -359,14 +390,25 @@ export const iconLock: IconDrawer = (g, s, color, lw) => {
   g.fillRoundedRect(-s * 0.3, -s * 0.06, s * 0.6, s * 0.44, s * 0.1);
 };
 
-/** Hash / guideline-grid tool icon. */
-export const iconGrid: IconDrawer = (g, s, color, lw) => {
-  const a = s * 0.34;
-  const b = s * 0.14;
-  stroke(g, -b, -a, -b, a, color, lw);
-  stroke(g, b, -a, b, a, color, lw);
-  stroke(g, -a, -b, a, -b, color, lw);
-  stroke(g, -a, b, a, b, color, lw);
+/** Guideline-grid tool icon: four candy tiles with a window gap. */
+export const iconGrid: IconDrawer = (g, s, color, _lw) => {
+  const cell = s * 0.3;
+  const gap = s * 0.08;
+  const rad = s * 0.07;
+  const origin = -(cell + gap / 2);
+  for (const [ix, iy] of [
+    [0, 0],
+    [1, 0],
+    [0, 1],
+    [1, 1],
+  ] as const) {
+    const x = origin + ix * (cell + gap);
+    const y = origin + iy * (cell + gap);
+    g.fillStyle(color, 1);
+    g.fillRoundedRect(x, y, cell, cell, rad);
+    g.fillStyle(0xffffff, 0.45);
+    g.fillRoundedRect(x + cell * 0.12, y + cell * 0.12, cell * 0.55, cell * 0.3, rad * 0.8);
+  }
 };
 
 /**
@@ -950,8 +992,13 @@ export class IconButton extends Phaser.GameObjects.Container {
 
     const layer = this.scene.add.container(this.opts.size / 2 - 6, -this.opts.size / 2 + 4);
     const g = this.scene.add.graphics();
+    // The badge is a tiny chunky button itself: edge below, sheen on top.
+    g.fillStyle(darken(COLORS.pink, 0.3), 1);
+    g.fillRoundedRect(-17, -9, 34, 22, 11);
     g.fillStyle(COLORS.pink, 1);
     g.fillRoundedRect(-17, -11, 34, 22, 11);
+    g.fillStyle(0xffffff, 0.25);
+    g.fillRoundedRect(-13, -8, 26, 8, 4);
     layer.add(g);
     layer.add(
       this.scene.add
@@ -971,11 +1018,26 @@ export class IconButton extends Phaser.GameObjects.Container {
 
   private redraw(): void {
     const { size, radius, fill } = this.opts;
-    const base = this.pressed && this.enabled ? darken(fill, 0.1) : fill;
+    const pressed = this.pressed && this.enabled;
+    // Chunky game button: a darker bottom edge gives it thickness, and a
+    // press sinks the face onto that edge instead of just tinting it.
+    const edge = Math.max(3, Math.round(size * 0.08));
+    const lift = pressed ? edge : 0;
+    const half = size / 2;
+    const faceH = size - edge;
 
     this.bg.clear();
-    this.bg.fillStyle(base, 1);
-    this.bg.fillRoundedRect(-size / 2, -size / 2, size, size, radius);
+    this.bg.fillStyle(darken(fill, 0.26), 1);
+    this.bg.fillRoundedRect(-half, -half + edge, size, faceH, radius);
+    this.bg.fillStyle(pressed ? darken(fill, 0.05) : fill, 1);
+    this.bg.fillRoundedRect(-half, -half + lift, size, faceH, radius);
+    // A soft sheen across the top half sells the candy look.
+    this.bg.fillStyle(0xffffff, 0.2);
+    this.bg.fillRoundedRect(-half + 4, -half + lift + 3, size - 8, faceH * 0.42, Math.max(4, radius - 4));
+
+    // The icon and badge ride the face, so they sink with it.
+    this.iconLayer.setY(-edge / 2 + lift);
+    this.badgeLayer?.setY(-half + 4 + lift);
     // "Disabled = 40% alpha" applies to the whole control.
     this.setAlpha(this.enabled ? 1 : 0.4);
     this.badgeLayer?.setAlpha(this.enabled ? 1 : 0.4);

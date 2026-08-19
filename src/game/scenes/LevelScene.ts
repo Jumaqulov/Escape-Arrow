@@ -8,7 +8,7 @@ import type { Arrow, Cell, Board } from '../../core/types';
 import { DX, DY, arrowCells } from '../../core/types';
 import { blockerOf, freeArrows, isFree, pathCells } from '../../core/rules';
 import { parseLevel } from '../../core/format';
-import { ARROW_INK, COLORS, FONT, RADIUS, applyArrowSkin, applyChapterPalette, darken, hex } from '../theme';
+import { ARROW_INK, COLORS, FONT, RADIUS, applyArrowSkin, applyChapterPalette, darken, hex, mix } from '../theme';
 import {
   Button,
   CoinButton,
@@ -82,6 +82,14 @@ const BOARD_PAD = 22;
 
 /** Cell size in WORLD space; the view scales, the board does not shrink. */
 const WORLD_CELL = 48;
+
+/**
+ * Smallest on-screen cell (CSS px) a board is allowed to OPEN at on touch
+ * devices. Well under the 44px ideal tap target because arrows are multi-cell
+ * and the player can zoom on from there - but big enough that the opening
+ * view is playable, not squinting material.
+ */
+const MIN_TOUCH_CELL = 34;
 /** Movement past this many pixels counts as a pan, not a tap. */
 const DRAG_THRESHOLD = 12;
 /** Held longer than this and the press is a question about the arrow, not a move. */
@@ -164,6 +172,10 @@ export class LevelScene extends Phaser.Scene {
   private toolButtons = new Map<Tool, IconButton>();
   private dragging = false;
   private dragMoved = 0;
+  /** Distance between the two pinch touches; 0 means no pinch in progress. */
+  private pinchDist = 0;
+  private pinchMidX = 0;
+  private pinchMidY = 0;
   /** Ids of the arrows that can fly right now; drives the resting lift. */
   private freeIds = new Set<number>();
   private holdTimer: Phaser.Time.TimerEvent | null = null;
@@ -232,6 +244,8 @@ export class LevelScene extends Phaser.Scene {
     this.streak = 0;
     this.bestStreak = 0;
     this.undoFreeSpent = false;
+    this.dragging = false;
+    this.pinchDist = 0;
     this.busy = false;
     this.finished = false;
     this.failed = false;
@@ -345,10 +359,25 @@ export class LevelScene extends Phaser.Scene {
 
     this.minScale = fit * 0.9;
     this.maxScale = Math.max(1.6, fit * 3);
-    this.worldScale = fit;
+
+    // On a phone "the whole board" can mean 15px cells. Open at a zoom whose
+    // cells a thumb can actually hit and let the player pinch out for the
+    // overview, rather than opening on a board nobody can tap.
+    let open = fit;
+    if (this.sys.game.device.input.touch) {
+      const cssPerUnit = this.scale.displaySize.width / Math.max(1, this.scale.gameSize.width);
+      if (cssPerUnit > 0) {
+        const readable = MIN_TOUCH_CELL / (WORLD_CELL * cssPerUnit);
+        open = Phaser.Math.Clamp(Math.max(fit, readable), fit, this.maxScale);
+      }
+    }
+
+    this.worldScale = open;
+    // applyWorld centres an axis that fits and clamps one that overflows, so
+    // this centre request lands correctly at any open scale.
     this.applyWorld(
-      view.x + (view.width - size.w * fit) / 2 + BOARD_PAD * fit,
-      view.y + (view.height - size.h * fit) / 2 + BOARD_PAD * fit,
+      view.x + (view.width - size.w * open) / 2 + BOARD_PAD * open,
+      view.y + (view.height - size.h * open) / 2 + BOARD_PAD * open,
     );
   }
 
@@ -395,6 +424,11 @@ export class LevelScene extends Phaser.Scene {
     this.applyWorld(px - (px - this.world.x) * ratio, py - (py - this.world.y) * ratio);
   }
 
+  /** The touch pointers currently held down - the raw material of a pinch. */
+  private activeTouches(): Phaser.Input.Pointer[] {
+    return this.input.manager.pointers.filter((p) => p.isDown && p.wasTouch);
+  }
+
   private installCameraControls(): void {
     this.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
       this.zoomBy(dy > 0 ? 0.88 : 1.14, _p.x, _p.y);
@@ -409,13 +443,50 @@ export class LevelScene extends Phaser.Scene {
       // A modal owns the screen, and a settled level is no longer a board to
       // pan - a press on either must not start a drag.
       if (this.overlayLayer || this.finished || this.failed) return;
+      const touches = this.activeTouches();
+      if (touches.length >= 2) {
+        // A second finger turns the gesture into a pinch: whatever tap or
+        // pan the first one started is over.
+        this.cancelHold();
+        this.dragging = false;
+        const [a, b] = touches;
+        this.pinchDist = Phaser.Math.Distance.Between(a!.x, a!.y, b!.x, b!.y);
+        this.pinchMidX = (a!.x + b!.x) / 2;
+        this.pinchMidY = (a!.y + b!.y) / 2;
+        return;
+      }
       this.dragging = true;
       this.dragMoved = 0;
+    });
+
+    // Pinch: both touches zoom about their midpoint, and the midpoint's own
+    // travel pans the board, so zoom and two-finger pan are one gesture.
+    this.input.on('pointermove', () => {
+      if (this.pinchDist <= 0) return;
+      if (this.overlayLayer || this.finished || this.failed) return;
+      const touches = this.activeTouches();
+      if (touches.length < 2) return;
+      const [a, b] = touches;
+      const dist = Phaser.Math.Distance.Between(a!.x, a!.y, b!.x, b!.y);
+      const midX = (a!.x + b!.x) / 2;
+      const midY = (a!.y + b!.y) / 2;
+      if (dist > 0) this.zoomBy(dist / this.pinchDist, midX, midY);
+
+      const wasX = this.world.x;
+      const wasY = this.world.y;
+      this.applyWorld(this.world.x + (midX - this.pinchMidX), this.world.y + (midY - this.pinchMidY));
+      this.backdrop.x += (this.world.x - wasX) * 0.25;
+      this.backdrop.y += (this.world.y - wasY) * 0.25;
+
+      this.pinchDist = Math.max(1, dist);
+      this.pinchMidX = midX;
+      this.pinchMidY = midY;
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
       // The press can predate the modal; the move must still not pan under it.
       if (this.overlayLayer || this.finished || this.failed) return;
+      if (this.pinchDist > 0) return;
       if (!this.dragging || !pointer.isDown) return;
       const dx = pointer.x - pointer.prevPosition.x;
       const dy = pointer.y - pointer.prevPosition.y;
@@ -444,12 +515,21 @@ export class LevelScene extends Phaser.Scene {
     // The gesture is resolved here rather than on the zone, so a release that
     // slipped a few pixels off the arrow still counts as the press it began.
     this.input.on('pointerup', () => {
+      if (this.pinchDist > 0) {
+        // A pinch ends the moment either finger lifts; the survivor must
+        // press again before it can pan, or the board would jump to it.
+        if (this.activeTouches().length < 2) this.pinchDist = 0;
+        this.dragging = false;
+        this.cancelHold();
+        return;
+      }
       this.dragging = false;
       this.endHold();
     });
 
     // Released off the canvas: the gesture is over, but it resolved nowhere.
     this.input.on('pointerupoutside', () => {
+      this.pinchDist = 0;
       this.dragging = false;
       this.cancelHold();
     });
@@ -1429,7 +1509,13 @@ export class LevelScene extends Phaser.Scene {
 
   /** One-off coach mark, the first time a board is too big to fit. */
   private maybeShowZoomHint(): void {
-    if (!progress.needsZoomHint() || this.worldScale >= 0.95) return;
+    // Worth showing when the view is cramped either way: squeezed to fit
+    // (zoom would help) or opened past fit on touch (panning is now needed).
+    const view = this.viewRect();
+    const size = this.worldSize();
+    const overflows =
+      size.w * this.worldScale > view.width + 1 || size.h * this.worldScale > view.height + 1;
+    if (!progress.needsZoomHint() || (this.worldScale >= 0.95 && !overflows)) return;
     progress.markZoomHintSeen();
 
     const { width } = this.cameras.main;
@@ -1780,10 +1866,14 @@ export class LevelScene extends Phaser.Scene {
     const gap = 100;
     const left = width / 2 - gap * 1.5;
 
+    // Each tool wears its own candy colour, so the row reads as four distinct
+    // powers rather than four grey squares.
     this.hintButton = new IconButton(this, {
       x: left,
       y: TOOLBAR_Y,
       size: TOOLBAR_SIZE,
+      fill: mix(COLORS.card, COLORS.accent, 0.22),
+      iconColor: COLORS.accent,
       icon: iconMagnifier,
       caption: t('hint'),
       onClick: () => void this.onHint(),
@@ -1796,6 +1886,8 @@ export class LevelScene extends Phaser.Scene {
         x: left + gap,
         y: TOOLBAR_Y,
         size: TOOLBAR_SIZE,
+        fill: mix(COLORS.card, COLORS.pink, 0.2),
+        iconColor: COLORS.pink,
         icon: iconEraser,
         caption: t('toolEraser'),
         onClick: () => void this.onEraser(),
@@ -1808,6 +1900,8 @@ export class LevelScene extends Phaser.Scene {
         x: left + gap * 2,
         y: TOOLBAR_Y,
         size: TOOLBAR_SIZE,
+        fill: mix(COLORS.card, COLORS.ok, 0.2),
+        iconColor: COLORS.ok,
         icon: iconGrid,
         caption: t('toolGrid'),
         onClick: () => void this.onGrid(),
@@ -1818,6 +1912,8 @@ export class LevelScene extends Phaser.Scene {
       x: left + gap * 3,
       y: TOOLBAR_Y,
       size: TOOLBAR_SIZE,
+      fill: mix(COLORS.card, COLORS.amber, 0.24),
+      iconColor: darken(COLORS.amber, 0.18),
       icon: iconUndo,
       caption: t('undo'),
       enabled: false,
@@ -1826,20 +1922,23 @@ export class LevelScene extends Phaser.Scene {
 
     this.refreshTools();
 
-    // Dense boards need a zoom, so it sits right next to the tools.
+    // Dense boards need a zoom, so it sits right next to the tools - dressed
+    // in the same candy as the tool row, not as two orphan white squares.
     new IconButton(this, {
       x: width - 62,
-      y: TOOLBAR_Y - 32,
-      size: 48,
-      fill: COLORS.card,
+      y: TOOLBAR_Y - 34,
+      size: 52,
+      fill: mix(COLORS.card, COLORS.accent, 0.16),
+      iconColor: COLORS.accent,
       icon: iconZoomIn,
       onClick: () => this.zoomBy(1.25),
     });
     new IconButton(this, {
       x: width - 62,
-      y: TOOLBAR_Y + 32,
-      size: 48,
-      fill: COLORS.card,
+      y: TOOLBAR_Y + 34,
+      size: 52,
+      fill: mix(COLORS.card, COLORS.accent, 0.16),
+      iconColor: COLORS.accent,
       icon: iconZoomOut,
       onClick: () => this.zoomBy(0.8),
     });

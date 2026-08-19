@@ -25,6 +25,9 @@ const config: Phaser.Types.Core.GameConfig = {
     antialias: true,
     powerPreference: 'high-performance',
   },
+  // Mouse + two touch pointers: the second touch is what makes pinch-zoom
+  // possible on the board.
+  input: { activePointers: 3 },
   disableContextMenu: true,
   banner: false,
   scene: [BootScene, MenuScene, LevelSelectScene, LevelScene, WinScene, SettingsScene, ShopScene],
