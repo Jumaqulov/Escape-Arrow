@@ -7,8 +7,8 @@
 import type { SaveData } from '../sdk/ISdk';
 import { defaultSave, SAVE_VERSION } from '../sdk/ISdk';
 import { getSdk } from '../sdk/sdk';
-import { TOTAL_LEVELS, globalIndex } from './levels';
-import { normalizeLang, setLang } from './i18n';
+import { CHAPTERS, TOTAL_LEVELS, globalIndex } from './levels';
+import { isLang, normalizeLang, setLang } from './i18n';
 
 function key(chapter: number, index: number): string {
   return `${chapter}:${index}`;
@@ -22,8 +22,8 @@ function dayKey(date: Date): string {
 }
 
 /** Yesterday's local date, via calendar arithmetic so DST days cannot skew it. */
-function yesterdayKey(): string {
-  const date = new Date();
+function yesterdayKey(now = new Date()): string {
+  const date = new Date(now);
   date.setDate(date.getDate() - 1);
   return dayKey(date);
 }
@@ -62,7 +62,101 @@ export const DAILY_CAP = 300;
 /** Coin price of each unlockable palette (palette 0 is free). */
 export const THEME_PRICE = 300;
 
-class ProgressStore {
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function nonNegativeInt(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : fallback;
+}
+
+function uniqueStrings(value: unknown, accept: (entry: string) => boolean): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((entry): entry is string => typeof entry === 'string' && accept(entry)))];
+}
+
+function uniqueInts(value: unknown, accept: (entry: number) => boolean): number[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.filter(
+        (entry): entry is number => typeof entry === 'number' && Number.isInteger(entry) && accept(entry),
+      ),
+    ),
+  ];
+}
+
+/** Normalize an absent, old, or partially corrupted payload into save schema v5. */
+export function repairSave(loaded: unknown, fallbackLang = 'en'): SaveData {
+  const source = recordOf(loaded);
+  const data = defaultSave();
+  data.lang = normalizeLang(fallbackLang);
+  if (!source) return data;
+
+  const stars = recordOf(source['stars']);
+  data.stars = {};
+  if (stars) {
+    for (const [id, value] of Object.entries(stars)) {
+      if (/^\d+:\d+$/.test(id) && typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 3) {
+        data.stars[id] = value;
+      }
+    }
+  }
+
+  const unlocked = nonNegativeInt(source['unlocked'], 1);
+  data.unlocked = Math.min(TOTAL_LEVELS, Math.max(1, unlocked));
+  data.sound = typeof source['sound'] === 'boolean' ? source['sound'] : true;
+  data.lang = typeof source['lang'] === 'string' && isLang(source['lang'])
+    ? source['lang']
+    : normalizeLang(fallbackLang);
+  data.played = nonNegativeInt(source['played']);
+  data.tutorialDone = typeof source['tutorialDone'] === 'boolean' ? source['tutorialDone'] : false;
+  data.coins = nonNegativeInt(source['coins']);
+
+  const tools = recordOf(source['tools']);
+  for (const tool of TOOLS) data.tools[tool] = nonNegativeInt(tools?.[tool]);
+  data.seenTools = uniqueStrings(source['seenTools'], (entry) => TOOLS.includes(entry as Tool));
+
+  const sensitivity = typeof source['dragSensitivity'] === 'number' && Number.isFinite(source['dragSensitivity'])
+    ? source['dragSensitivity']
+    : 1;
+  data.dragSensitivity = Math.min(2, Math.max(0.5, sensitivity));
+  data.seenZoomHint = typeof source['seenZoomHint'] === 'boolean' ? source['seenZoomHint'] : false;
+
+  data.skins = uniqueStrings(source['skins'], (entry) => entry !== '' && entry !== 'classic');
+  const selectedSkin = typeof source['skin'] === 'string' ? source['skin'] : 'classic';
+  data.skin = selectedSkin === 'classic' || data.skins.includes(selectedSkin) ? selectedSkin : 'classic';
+
+  data.themes = uniqueInts(source['themes'], (entry) => entry > 0 && entry < CHAPTERS.length);
+  const themeChoice = typeof source['themeChoice'] === 'number' && Number.isInteger(source['themeChoice'])
+    ? source['themeChoice']
+    : -1;
+  data.themeChoice = themeChoice === -1 || themeChoice === 0 || data.themes.includes(themeChoice)
+    ? themeChoice
+    : -1;
+
+  const daily = recordOf(source['daily']);
+  const lastWin = typeof daily?.['lastWin'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(daily['lastWin'])
+    ? daily['lastWin']
+    : '';
+  data.daily = {
+    lastWin,
+    streak: lastWin ? nonNegativeInt(daily?.['streak']) : 0,
+  };
+
+  data.boss = uniqueInts(source['boss'], (entry) => entry >= 0 && entry < CHAPTERS.length);
+  const savedAt = source['savedAt'];
+  if (typeof savedAt === 'number' && Number.isFinite(savedAt) && savedAt >= 0) data.savedAt = savedAt;
+
+  data.v = SAVE_VERSION;
+  return data;
+}
+
+export class ProgressStore {
   data: SaveData = defaultSave();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -70,56 +164,8 @@ class ProgressStore {
   async load(): Promise<void> {
     const sdk = getSdk();
     const loaded = await sdk.load();
-
-    if (loaded && typeof loaded === 'object') {
-      this.data = { ...defaultSave(), ...loaded, v: SAVE_VERSION };
-      if (typeof this.data.stars !== 'object' || this.data.stars === null) this.data.stars = {};
-      if (typeof this.data.unlocked !== 'number' || this.data.unlocked < 1) this.data.unlocked = 1;
-      if (typeof this.data.sound !== 'boolean') this.data.sound = true;
-      if (typeof this.data.played !== 'number') this.data.played = 0;
-      if (typeof this.data.tutorialDone !== 'boolean') this.data.tutorialDone = false;
-      if (typeof this.data.coins !== 'number' || this.data.coins < 0) this.data.coins = 0;
-      if (!Array.isArray(this.data.seenTools)) this.data.seenTools = [];
-      if (typeof this.data.seenZoomHint !== 'boolean') this.data.seenZoomHint = false;
-      if (typeof this.data.dragSensitivity !== 'number' || !(this.data.dragSensitivity > 0)) {
-        this.data.dragSensitivity = 1;
-      }
-      this.data.dragSensitivity = Math.min(2, Math.max(0.5, this.data.dragSensitivity));
-      if (typeof this.data.tools !== 'object' || this.data.tools === null) {
-        this.data.tools = { hint: 0, eraser: 0, grid: 0 };
-      }
-      for (const tool of TOOLS) {
-        if (typeof this.data.tools[tool] !== 'number' || this.data.tools[tool] < 0) {
-          this.data.tools[tool] = 0;
-        }
-      }
-      if (!Array.isArray(this.data.skins)) this.data.skins = [];
-      if (typeof this.data.skin !== 'string' || this.data.skin === '') this.data.skin = 'classic';
-      if (!this.hasSkin(this.data.skin)) this.data.skin = 'classic';
-      if (!Array.isArray(this.data.themes)) this.data.themes = [];
-      if (typeof this.data.themeChoice !== 'number' || this.data.themeChoice < -1) {
-        this.data.themeChoice = -1;
-      }
-      // A forced palette the save does not actually own falls back to "auto".
-      if (this.data.themeChoice >= 0 && !this.hasTheme(this.data.themeChoice)) {
-        this.data.themeChoice = -1;
-      }
-      if (typeof this.data.daily !== 'object' || this.data.daily === null) {
-        this.data.daily = { lastWin: '', streak: 0 };
-      }
-      if (typeof this.data.daily.lastWin !== 'string') this.data.daily.lastWin = '';
-      if (typeof this.data.daily.streak !== 'number' || this.data.daily.streak < 0) {
-        this.data.daily.streak = 0;
-      }
-      if (!Array.isArray(this.data.boss)) this.data.boss = [];
-    } else {
-      this.data = defaultSave();
-      this.data.lang = sdk.getLang();
-    }
-
-    this.data.unlocked = Math.min(this.data.unlocked, TOTAL_LEVELS);
-    setLang(normalizeLang(this.data.lang));
-    this.data.lang = normalizeLang(this.data.lang);
+    this.data = repairSave(loaded, sdk.getLang());
+    setLang(this.data.lang);
   }
 
   /** Write now. */
@@ -308,26 +354,26 @@ class ProgressStore {
 
   // ------------------------------------------------------------ daily challenge
 
-  todayKey(): string {
-    return dayKey(new Date());
+  todayKey(date = new Date()): string {
+    return dayKey(date);
   }
 
-  canPlayDaily(): boolean {
-    return this.data.daily.lastWin !== this.todayKey();
+  canPlayDaily(date = new Date()): boolean {
+    return this.data.daily.lastWin !== this.todayKey(date);
   }
 
   /** The streak as the player should see it: 0 once a day has been missed. */
-  dailyStreak(): number {
+  dailyStreak(date = new Date()): number {
     const last = this.data.daily.lastWin;
-    if (last !== this.todayKey() && last !== yesterdayKey()) return 0;
+    if (last !== this.todayKey(date) && last !== yesterdayKey(date)) return 0;
     return this.data.daily.streak;
   }
 
   /** Pay out today's daily win. Returns the coins granted, 0 if already won today. */
-  recordDailyWin(): number {
-    const today = this.todayKey();
+  recordDailyWin(date = new Date()): number {
+    const today = this.todayKey(date);
     if (this.data.daily.lastWin === today) return 0;
-    this.data.daily.streak = this.data.daily.lastWin === yesterdayKey() ? this.data.daily.streak + 1 : 1;
+    this.data.daily.streak = this.data.daily.lastWin === yesterdayKey(date) ? this.data.daily.streak + 1 : 1;
     this.data.daily.lastWin = today;
     const reward = Math.min(DAILY_CAP, DAILY_BASE + DAILY_STEP * (this.data.daily.streak - 1));
     this.addCoins(reward);

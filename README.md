@@ -9,7 +9,7 @@ put, costing a heart. Clear every arrow before the clock runs out.
 
 Built with **Vite + TypeScript (strict) + Phaser 3**. No sprites, no images, no
 raster assets, no web fonts: every pixel on screen is drawn with
-`Phaser.Graphics`. The current production bundle is **~386 KiB gzipped**.
+`Phaser.Graphics`. The current production bundle is **~395 KiB gzipped**.
 
 ---
 
@@ -29,6 +29,8 @@ hint / eraser / grid / refill flows can all be exercised offline.
 | Script | What it does |
 | --- | --- |
 | `npm run dev` | Vite dev server with HMR |
+| `npm test` | Run the Node regression suite for rules, generation, saves, tutorials, and extracted geometry |
+| `npm run typecheck` | Check strict TypeScript without emitting files |
 | `npm run build` | Type-check (`tsc --noEmit`) then build to `dist/` |
 | `npm run preview` | Serve the built `dist/` locally, exactly as a portal would |
 | `npm run validate` | Solve-check all 150 campaign levels and 3 bosses + print the difficulty spread |
@@ -140,7 +142,7 @@ then Up". `parsePack()` refuses anything that is not `version: 2`.
 Level 1 is the one deliberately tiny board (5 arrows), reserved for the tap
 tutorial. From level 2 the board is already busy, on a front-loaded `t^0.42`
 curve — a sparse board is solved on sight, which is what makes players bounce.
-The first two campaign boards currently show the tap coach mark when opened.
+The first two campaign boards are eligible for a one-time tap coach mark.
 
 ```
 level:     1   2   5  25  50  75 100 125 150
@@ -276,11 +278,17 @@ src/
     theme.ts       palette, chapter palettes, radii, font stack
     i18n.ts        EN / RU / TR / ES / PT / UZ dictionary
     progress.ts    stars, unlocks, economy, daily/boss state, settings
-    ui.ts          buttons, icons, cards, modals, arrow line art, effects
+    tutorial.ts    one-time opening-board coach eligibility
+    level/
+      flightPath.ts  sampled flight geometry and corner-preserving path slices
+    ui.ts          buttons, icons, cards, modals, and effects
+    ui/
+      arrow.ts     arrow-head geometry, line renderer, and glow
     devcheck.ts    dev-only invariants (arrow head rotation)
     scenes/        Boot, Menu, LevelSelect, Level, Win, Settings, Shop
   levels/levels.json   150 campaign levels + 3 bosses, format v2
 scripts/           generate / validate / sounds / zip
+tests/             Node regression tests (`npm test`)
 public/            privacy.html, favicon, sounds
 ```
 

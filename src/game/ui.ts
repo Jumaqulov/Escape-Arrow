@@ -9,8 +9,17 @@
  * sticks.
  */
 import Phaser from 'phaser';
-import type { Cell, Dir } from '../core/types';
 import { COLORS, FONT, RADIUS, SHADOW_ALPHA, darken, hex, mix } from './theme';
+import { arrowHeadPoints, drawPolyArrow } from './ui/arrow';
+export {
+  HEAD_ANGLE,
+  HEAD_LENGTH,
+  HEAD_HALF_WIDTH,
+  arrowHeadPoints,
+  drawPolyArrow,
+  drawPolyArrowGlow,
+} from './ui/arrow';
+export type { HeadPoints } from './ui/arrow';
 
 /**
  * Give a Container a centred, pointer-friendly hit area.
@@ -102,108 +111,6 @@ export function drawDotGrid(
     for (let x = 0; x <= cols; x++) {
       g.fillCircle(originX + x * cell, originY + y * cell, radius);
     }
-  }
-}
-
-// ------------------------------------------------------------------ arrows
-
-/**
- * Rotation of the head dart, in degrees clockwise from "pointing right".
- *
- * This is the single source of truth for head orientation - the renderer never
- * derives it from DX/DY, so U can never silently come out as R.
- */
-export const HEAD_ANGLE: Readonly<Record<Dir, number>> = { R: 0, D: 90, L: 180, U: 270 };
-
-/** Dart proportions, as a fraction of one cell. */
-export const HEAD_LENGTH = 0.48;
-export const HEAD_HALF_WIDTH = 0.16;
-
-export interface HeadPoints {
-  tip: Cell;
-  left: Cell;
-  right: Cell;
-  /** Unit vector the dart points along. */
-  forward: Cell;
-}
-
-/**
- * The three corners of the head dart around (x,y).
- *
- * The base is centred exactly on (x,y), which is also where the shaft starts -
- * so there is never a gap or an overlap between neck and head.
- */
-export function arrowHeadPoints(x: number, y: number, dir: Dir, cell: number): HeadPoints {
-  const a = Phaser.Math.DegToRad(HEAD_ANGLE[dir]);
-  const ux = Math.round(Math.cos(a));
-  const uy = Math.round(Math.sin(a));
-  const nx = -uy;
-  const ny = ux;
-
-  const len = cell * HEAD_LENGTH;
-  const half = cell * HEAD_HALF_WIDTH;
-
-  return {
-    tip: { x: x + ux * len, y: y + uy * len },
-    left: { x: x + nx * half, y: y + ny * half },
-    right: { x: x - nx * half, y: y - ny * half },
-    forward: { x: ux, y: uy },
-  };
-}
-
-/**
- * Draw an arrow as stroked line art: a polyline through `points` (head first,
- * then the tail) plus a slim filled dart at the head.
- */
-export function drawPolyArrow(
-  g: Phaser.GameObjects.Graphics,
-  points: Cell[],
-  lineWidth: number,
-  color: number,
-  dir: Dir,
-  cell: number,
-  alpha = 1,
-): void {
-  const head = points[0];
-  if (!head) return;
-
-  if (points.length > 1) {
-    g.lineStyle(lineWidth, color, alpha);
-    g.beginPath();
-    g.moveTo(head.x, head.y);
-    for (let i = 1; i < points.length; i++) g.lineTo(points[i]!.x, points[i]!.y);
-    g.strokePath();
-  }
-
-  // Round the caps and joins by hand - see the file header.
-  g.fillStyle(color, alpha);
-  for (const p of points) g.fillCircle(p.x, p.y, lineWidth / 2);
-
-  const dart = arrowHeadPoints(head.x, head.y, dir, cell);
-  g.fillTriangle(dart.tip.x, dart.tip.y, dart.left.x, dart.left.y, dart.right.x, dart.right.y);
-}
-
-/**
- * Halo for an arrow. Draw it *before* the arrow itself - it is the same shape
- * re-stroked ever wider at ~10% alpha, so the arrow has to land on top or the
- * washed-out copies would grey it out.
- *
- * Graphics cannot blur, so the softness comes entirely from the stack: widest
- * layer first, each one narrower and sitting on the previous, which builds the
- * falloff the same way `drawShadow` does for cards.
- */
-export function drawPolyArrowGlow(
-  g: Phaser.GameObjects.Graphics,
-  points: Cell[],
-  lineWidth: number,
-  color: number,
-  dir: Dir,
-  cell: number,
-  layers = 3,
-): void {
-  // Widest first: later, thinner passes stack their alpha on top of it.
-  for (let i = layers - 1; i >= 0; i--) {
-    drawPolyArrow(g, points, lineWidth + i * 6, color, dir, cell, 0.1);
   }
 }
 

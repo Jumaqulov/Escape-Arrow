@@ -56,6 +56,8 @@ import type { Tool } from '../progress';
 import { CHAPTERS, TOTAL_LEVELS, bossData, dailyData, refByGlobal, type LevelRef } from '../levels';
 import { t } from '../i18n';
 import { getSdk } from '../../sdk/sdk';
+import { shouldShowTapTutorial } from '../tutorial';
+import { pathSlice } from '../level/flightPath';
 
 interface ArrowView {
   arrow: Arrow;
@@ -295,8 +297,9 @@ export class LevelScene extends Phaser.Scene {
     this.updateTimer();
     this.time.addEvent({ delay: 1000, loop: true, callback: () => this.tickTimer() });
 
-    // The opening two boards always coach; after that the player is on their own.
-    if (this.ref.global <= 1) {
+    // The opening two campaign boards can coach, but only until the first
+    // coached tap marks the tutorial complete in the persisted save.
+    if (shouldShowTapTutorial(this.ref.global, progress.needsTutorial(), this.special !== null)) {
       this.time.delayedCall(420, () => this.showTutorial());
     }
 
@@ -881,7 +884,7 @@ export class LevelScene extends Phaser.Scene {
         // Take the WHOLE slice of the track the body currently covers, corner
         // vertices included. Sampling only the original cell centres would
         // chord across each bend and the arrow would come out skewed.
-        const shape = this.pathSlice(track, cum, state.offset, state.offset + bodyLength, dx, dy);
+        const shape = pathSlice(track, cum, state.offset, state.offset + bodyLength, dx, dy);
         shape.reverse(); // pathSlice runs tail -> head; the renderer wants head first.
 
         // Trail only while the head is still over the board. Past the edge it
@@ -908,60 +911,6 @@ export class LevelScene extends Phaser.Scene {
         this.checkWin();
       },
     });
-  }
-
-  /**
-   * The stretch of `points` between two arc lengths, as a polyline.
-   *
-   * Both ends are interpolated, and every track vertex in between is kept - so
-   * a body crossing a corner still bends at exactly that corner instead of
-   * cutting the chord across it.
-   */
-  private pathSlice(
-    points: Array<{ x: number; y: number }>,
-    cum: number[],
-    from: number,
-    to: number,
-    dx: number,
-    dy: number,
-  ): Array<{ x: number; y: number }> {
-    const out = [this.samplePath(points, cum, from, dx, dy)];
-    for (let i = 0; i < cum.length; i++) {
-      const at = cum[i]!;
-      if (at > from && at < to) out.push(points[i]!);
-    }
-    out.push(this.samplePath(points, cum, to, dx, dy));
-    return out;
-  }
-
-  /** Point `distance` along the polyline, extrapolating straight past the end. */
-  private samplePath(
-    points: Array<{ x: number; y: number }>,
-    cum: number[],
-    distance: number,
-    dx: number,
-    dy: number,
-  ): { x: number; y: number } {
-    const first = points[0]!;
-    if (distance <= 0) return first;
-
-    const total = cum[cum.length - 1]!;
-    if (distance >= total) {
-      const last = points[points.length - 1]!;
-      const over = distance - total;
-      return { x: last.x + dx * over, y: last.y + dy * over };
-    }
-
-    for (let i = 1; i < cum.length; i++) {
-      if (distance <= cum[i]!) {
-        const span = cum[i]! - cum[i - 1]!;
-        const t = span === 0 ? 0 : (distance - cum[i - 1]!) / span;
-        const a = points[i - 1]!;
-        const b = points[i]!;
-        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-      }
-    }
-    return points[points.length - 1]!;
   }
 
   private reject(view: ArrowView): void {
