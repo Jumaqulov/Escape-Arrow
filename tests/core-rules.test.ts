@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  analyze,
   blockerOf,
   freeArrows,
   isFree,
@@ -65,4 +66,24 @@ test('structural validation reports overlap, missing neck, and self-ray violatio
   assert.ok(errors.some((message) => message.includes('has no tail')));
   assert.ok(errors.some((message) => message.includes('own escape ray')));
   assert.equal(validate(invalid), false);
+});
+
+test('analysis reports tail length and winding complexity', () => {
+  const winding: Arrow = {
+    id: 1,
+    head: { x: 3, y: 1 },
+    dir: 'R',
+    tail: [
+      { x: 2, y: 1 },
+      { x: 2, y: 2 },
+      { x: 1, y: 2 },
+      { x: 1, y: 3 },
+      { x: 0, y: 3 },
+    ],
+  };
+
+  const stats = analyze({ w: 5, h: 5, arrows: [winding] });
+  assert.equal(stats.avgTail, 5);
+  assert.equal(stats.avgTurns, 4);
+  assert.equal(stats.longTailRatio, 1);
 });

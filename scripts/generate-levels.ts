@@ -13,7 +13,8 @@
  * packer keeps the generator's reverse-construction invariant (each new head's
  * escape ray is clear of everything already placed, so replaying placement
  * order backwards is a guaranteed solution) but picks heads most-constrained-
- * first and walks tails dead-end-first, which reaches 93-96% occupancy.
+ * first and backtracks through long, winding tails that cross existing escape
+ * rays. That produces the dense dependency web seen in the reference game.
  *
  *   npx tsx scripts/generate-levels.ts
  */
@@ -34,17 +35,17 @@ const BASE_SEED = 20260819;
 const PER_CHAPTER = 50;
 
 /**
- * Tail lengths are drawn bimodally: mostly-short darts keep the arrow count
- * high, while max-of-two draws from the long range guarantee genuinely long
- * snakes on every board. One arrow covers 1 + tail cells, so at a fixed grid
- * size the average tail length and the arrow count trade off directly -
- * this mix is how the boards get BOTH.
+ * Tail lengths are drawn bimodally. A small short band preserves some visual
+ * rhythm, while the dominant long band creates the intertwined paths that make
+ * a board readable as a puzzle instead of a pile of isolated darts.
  */
 interface TailMix {
-  /** Chance of a short dart instead of a long snake. */
+  /** Chance of a shorter connector instead of a long snake. */
   shortChance: number;
   short: [number, number];
   long: [number, number];
+  /** Smallest tail accepted when the requested walk cannot be completed. */
+  minActual: number;
 }
 
 interface ChapterSpec {
@@ -66,29 +67,29 @@ const CHAPTERS: ChapterSpec[] = [
     from: { w: 12, h: 15 },
     to: { w: 14, h: 18 },
     fill: { from: 0.85, to: 0.94 },
-    tails: { shortChance: 0.4, short: [1, 2], long: [3, 5] },
+    tails: { shortChance: 0.14, short: [2, 4], long: [5, 8], minActual: 2 },
   },
   {
     name: 'Chapter 2',
     from: { w: 14, h: 18 },
     to: { w: 17, h: 21 },
     fill: { from: 0.87, to: 0.955 },
-    tails: { shortChance: 0.37, short: [1, 2], long: [4, 7] },
+    tails: { shortChance: 0.1, short: [3, 5], long: [7, 11], minActual: 3 },
   },
   {
     name: 'Chapter 3',
     from: { w: 17, h: 21 },
     to: { w: 19, h: 25 },
     fill: { from: 0.89, to: 0.96 },
-    tails: { shortChance: 0.37, short: [1, 2], long: [5, 9] },
+    tails: { shortChance: 0.08, short: [4, 6], long: [9, 14], minActual: 4 },
   },
 ];
 
 /** One oversized showpiece per chapter, gated behind BOSS_GATE stars. */
 const BOSSES: Array<{ w: number; h: number; fill: number; tails: TailMix }> = [
-  { w: 15, h: 19, fill: 0.96, tails: { shortChance: 0.5, short: [1, 2], long: [3, 6] } },
-  { w: 18, h: 22, fill: 0.96, tails: { shortChance: 0.55, short: [1, 2], long: [4, 8] } },
-  { w: 20, h: 26, fill: 0.96, tails: { shortChance: 0.58, short: [1, 2], long: [5, 10] } },
+  { w: 15, h: 19, fill: 0.95, tails: { shortChance: 0.08, short: [4, 6], long: [8, 12], minActual: 4 } },
+  { w: 18, h: 22, fill: 0.95, tails: { shortChance: 0.06, short: [5, 7], long: [10, 15], minActual: 5 } },
+  { w: 20, h: 26, fill: 0.95, tails: { shortChance: 0.05, short: [6, 8], long: [12, 18], minActual: 6 } },
 ];
 
 function lerp(a: number, b: number, t: number): number {
@@ -107,12 +108,14 @@ function lerpInt(a: number, b: number, t: number): number {
  * directly behind the head, and the tail walks EMPTY cells only, never its own
  * ray. Tapping in reverse placement order therefore always clears the board.
  *
- * Two heuristics buy the extra ~30 points of density:
+ * Three heuristics create the difficulty:
  *  - Heads go to the cell with the FEWEST legal (direction) options first,
  *    deepest cell on ties. A deep cell that still has a clear ray is about to
  *    lose it for good; edge cells pointing outward stay placeable forever.
- *  - Tail steps prefer the neighbour with the fewest free exits, so walks
- *    consume dead-end pockets that would otherwise be stranded as holes.
+ *  - Tails prefer cells that lie on existing escape rays. Each crossing adds a
+ *    dependency, reducing the number of arrows that are immediately tappable.
+ *  - A bounded backtracking walk favours turns every few cells and refuses to
+ *    collapse a requested snake into a one-cell dart at the first dead end.
  */
 function packBoard(
   w: number,
@@ -145,12 +148,145 @@ function packBoard(
       ? randInt(tails.short[0], tails.short[1])
       : Math.max(randInt(tails.long[0], tails.long[1]), randInt(tails.long[0], tails.long[1]));
 
+  interface HeadCandidate {
+    head: Cell;
+    dir: Dir;
+    rank: number;
+  }
+
+  /** How many already-placed arrows would be blocked by occupying each cell. */
+  const rayPressure = (): Map<number, number> => {
+    const pressure = new Map<number, number>();
+    for (const arrow of board.arrows) {
+      let x = arrow.head.x + DX[arrow.dir];
+      let y = arrow.head.y + DY[arrow.dir];
+      while (inBounds(x, y)) {
+        const key = cellKey(x, y, w);
+        pressure.set(key, (pressure.get(key) ?? 0) + 1);
+        x += DX[arrow.dir];
+        y += DY[arrow.dir];
+      }
+    }
+    return pressure;
+  };
+
+  const occupiedNeighbours = (x: number, y: number): number => {
+    let count = 0;
+    for (const dir of DIRS) {
+      const nx = x + DX[dir];
+      const ny = y + DY[dir];
+      if (inBounds(nx, ny) && occupied.has(cellKey(nx, ny, w))) count++;
+    }
+    return count;
+  };
+
+  /**
+   * Find the longest useful walk towards `target`. Unlike the old greedy
+   * walker this explores alternate bends when its first route is boxed in.
+   */
+  const growTail = (
+    candidate: HeadCandidate,
+    target: number,
+    pressure: Map<number, number>,
+  ): Cell[] => {
+    const { head, dir } = candidate;
+    const ownRay = new Set<number>();
+    let rayX = head.x + DX[dir];
+    let rayY = head.y + DY[dir];
+    while (inBounds(rayX, rayY)) {
+      ownRay.add(cellKey(rayX, rayY, w));
+      rayX += DX[dir];
+      rayY += DY[dir];
+    }
+
+    const neck: Cell = { x: head.x - DX[dir], y: head.y - DY[dir] };
+    const own = new Set<number>([cellKey(head.x, head.y, w), cellKey(neck.x, neck.y, w)]);
+    const tail: Cell[] = [neck];
+    let best = tail.slice();
+    let explored = 0;
+    const searchBudget = 320;
+
+    const blockedFor = (x: number, y: number): boolean => {
+      const key = cellKey(x, y, w);
+      return occupied.has(key) || own.has(key) || ownRay.has(key);
+    };
+
+    const freeExits = (x: number, y: number): number => {
+      let count = 0;
+      for (const nextDir of DIRS) {
+        const nx = x + DX[nextDir];
+        const ny = y + DY[nextDir];
+        if (inBounds(nx, ny) && !blockedFor(nx, ny)) count++;
+      }
+      return count;
+    };
+
+    const search = (): boolean => {
+      if (tail.length > best.length) best = tail.slice();
+      if (tail.length >= target) return true;
+      if (explored++ >= searchBudget) return false;
+
+      const cursor = tail[tail.length - 1]!;
+      const before = tail.length > 1 ? tail[tail.length - 2]! : head;
+      const previousDx = cursor.x - before.x;
+      const previousDy = cursor.y - before.y;
+
+      const body = [head, ...tail];
+      let runLength = 1;
+      for (let i = body.length - 2; i > 0; i--) {
+        const from = body[i - 1]!;
+        const to = body[i]!;
+        if (to.x - from.x !== previousDx || to.y - from.y !== previousDy) break;
+        runLength++;
+      }
+
+      const options: Array<{ cell: Cell; key: number; score: number }> = [];
+      for (const nextDir of DIRS) {
+        const nx = cursor.x + DX[nextDir];
+        const ny = cursor.y + DY[nextDir];
+        if (!inBounds(nx, ny) || blockedFor(nx, ny)) continue;
+
+        const key = cellKey(nx, ny, w);
+        own.add(key);
+        const exits = freeExits(nx, ny);
+        own.delete(key);
+
+        const isTurn = DX[nextDir] !== previousDx || DY[nextDir] !== previousDy;
+        const remaining = target - tail.length - 1;
+        let score = (pressure.get(key) ?? 0) * 18 + occupiedNeighbours(nx, ny) * 2;
+        // Warnsdorff-style ordering consumes constrained pockets first. The
+        // zero-exit case is useful only for the final cell; earlier it would
+        // knowingly terminate the requested snake.
+        if (remaining > 0) {
+          if (exits === 0) continue;
+          score += (4 - Math.min(exits, 4)) * 5;
+        }
+        if (isTurn) score += runLength >= 2 ? 10 : -2;
+        else score += runLength === 1 ? 4 : -8;
+        score += rnd() * 3;
+        options.push({ cell: { x: nx, y: ny }, key, score });
+      }
+
+      options.sort((a, b) => b.score - a.score);
+      for (const option of options) {
+        tail.push(option.cell);
+        own.add(option.key);
+        if (search()) return true;
+        own.delete(option.key);
+        tail.pop();
+      }
+      return false;
+    };
+
+    return search() ? tail.slice() : best;
+  };
+
   while (occupied.size < cellBudget) {
-    // Most-constrained cell first, reservoir-sampled across ties so the same
-    // spec still yields distinct boards from distinct seeds.
-    let best: { x: number; y: number; dirs: Dir[] } | null = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-    let ties = 0;
+    const pressure = rayPressure();
+    const candidates: HeadCandidate[] = [];
+
+    // Keep most-constrained heads near the front, but let ray crossings and a
+    // small seeded jitter vary the geometry from board to board.
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         if (occupied.has(cellKey(x, y, w))) continue;
@@ -164,82 +300,45 @@ function packBoard(
         }
         if (dirs.length === 0) continue;
         const depth = Math.min(x, y, w - 1 - x, h - 1 - y);
-        const score = dirs.length * 100 - depth;
-        if (score < bestScore) {
-          bestScore = score;
-          best = { x, y, dirs };
-          ties = 1;
-        } else if (score === bestScore) {
-          ties++;
-          if (rnd() * ties < 1) best = { x, y, dirs };
+        for (const dir of dirs) {
+          const rank =
+            dirs.length * 40 - depth * 2 - (pressure.get(cellKey(x, y, w)) ?? 0) * 12 + rnd() * 5;
+          candidates.push({ head: { x, y }, dir, rank });
         }
       }
     }
-    // No empty cell has a legal head any more: the true ceiling of this board.
-    if (!best) break;
+    candidates.sort((a, b) => a.rank - b.rank);
+    if (candidates.length === 0) break;
 
-    const dir = best.dirs[Math.floor(rnd() * best.dirs.length)]!;
-    const head: Cell = { x: best.x, y: best.y };
-    const own = new Set<number>([cellKey(head.x, head.y, w)]);
-    const ownRay = new Set<number>();
-    {
-      let cx = head.x + DX[dir];
-      let cy = head.y + DY[dir];
-      while (inBounds(cx, cy)) {
-        ownRay.add(cellKey(cx, cy, w));
-        cx += DX[dir];
-        cy += DY[dir];
+    const remainingBudget = cellBudget - occupied.size - 1;
+    if (remainingBudget < 1) break;
+    const target = Math.min(drawTail(), remainingBudget);
+    const candidateLimit = Math.min(56, candidates.length);
+    let chosen: { candidate: HeadCandidate; tail: Cell[] } | null = null;
+    let longest: { candidate: HeadCandidate; tail: Cell[] } | null = null;
+
+    for (let i = 0; i < candidateLimit; i++) {
+      const candidate = candidates[i]!;
+      const tail = growTail(candidate, target, pressure);
+      if (!longest || tail.length > longest.tail.length) longest = { candidate, tail };
+      if (tail.length >= target) {
+        chosen = { candidate, tail };
+        break;
       }
     }
 
-    const blockedFor = (x: number, y: number): boolean => {
-      const key = cellKey(x, y, w);
-      return occupied.has(key) || own.has(key) || ownRay.has(key);
-    };
+    const minimum = Math.min(tails.minActual, target);
+    if (!chosen && longest && longest.tail.length >= minimum) chosen = longest;
 
-    const freeExits = (x: number, y: number): number => {
-      let n = 0;
-      for (const d of DIRS) {
-        const nx = x + DX[d];
-        const ny = y + DY[d];
-        if (inBounds(nx, ny) && !blockedFor(nx, ny)) n++;
-      }
-      return n;
-    };
+    // Near the packing ceiling, one short connector may be the only way to
+    // consume a stranded pocket. Do not let that exception dominate the mix.
+    if (!chosen && longest && occupied.size / (w * h) < fill - 0.035) chosen = longest;
+    if (!chosen) break;
 
-    // Neck first, then grow. A walk boxed in early just yields a short dart -
-    // never a rejected board.
-    const target = drawTail();
-    const tail: Cell[] = [{ x: head.x - DX[dir], y: head.y - DY[dir] }];
-    own.add(cellKey(tail[0]!.x, tail[0]!.y, w));
-    let cursor = tail[0]!;
-
-    for (let step = 1; step < target; step++) {
-      let next: Cell | null = null;
-      let fewest = Number.POSITIVE_INFINITY;
-      let optionTies = 0;
-      for (const d of DIRS) {
-        const nx = cursor.x + DX[d];
-        const ny = cursor.y + DY[d];
-        if (!inBounds(nx, ny) || blockedFor(nx, ny)) continue;
-        const exits = freeExits(nx, ny);
-        if (exits < fewest) {
-          fewest = exits;
-          next = { x: nx, y: ny };
-          optionTies = 1;
-        } else if (exits === fewest) {
-          optionTies++;
-          if (rnd() * optionTies < 1) next = { x: nx, y: ny };
-        }
-      }
-      if (!next) break;
-      tail.push(next);
-      own.add(cellKey(next.x, next.y, w));
-      cursor = next;
-    }
-
-    board.arrows.push({ id: board.arrows.length + 1, head, dir, tail });
-    for (const key of own) occupied.add(key);
+    const { head, dir } = chosen.candidate;
+    board.arrows.push({ id: board.arrows.length + 1, head, dir, tail: chosen.tail });
+    occupied.add(cellKey(head.x, head.y, w));
+    for (const cell of chosen.tail) occupied.add(cellKey(cell.x, cell.y, w));
   }
 
   return board;

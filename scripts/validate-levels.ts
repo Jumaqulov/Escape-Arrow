@@ -27,6 +27,17 @@ interface Budget {
   maxArrows: number;
   minTail: number;
   maxTail: number;
+  /** Per-level guards (the chapter-one tutorial opener is exempt). */
+  minDensity: number;
+  minAvgTail: number;
+  minAvgTurns: number;
+  minLongTailRatio: number;
+  maxOpeningRatio: number;
+  /** Chapter-wide targets prevent every level merely hugging the floor. */
+  chapterAvgTail: number;
+  chapterAvgTurns: number;
+  chapterLongTailRatio: number;
+  chapterMaxAvgFree: number;
 }
 
 /**
@@ -34,9 +45,24 @@ interface Budget {
  * ramp, so the gate checks the band rather than one number.
  */
 const BUDGETS: Budget[] = [
-  { minSize: 8, maxSize: 18, minArrows: 5, maxArrows: 80, minTail: 1, maxTail: 5 },
-  { minSize: 16, maxSize: 22, minArrows: 38, maxArrows: 95, minTail: 1, maxTail: 7 },
-  { minSize: 20, maxSize: 26, minArrows: 48, maxArrows: 120, minTail: 1, maxTail: 9 },
+  {
+    minSize: 8, maxSize: 18, minArrows: 5, maxArrows: 45, minTail: 1, maxTail: 8,
+    minDensity: 0.82, minAvgTail: 4.9, minAvgTurns: 2.3, minLongTailRatio: 0.5,
+    maxOpeningRatio: 0.46, chapterAvgTail: 5.7, chapterAvgTurns: 2.9,
+    chapterLongTailRatio: 0.7, chapterMaxAvgFree: 5,
+  },
+  {
+    minSize: 16, maxSize: 22, minArrows: 20, maxArrows: 48, minTail: 1, maxTail: 11,
+    minDensity: 0.8, minAvgTail: 6.4, minAvgTurns: 3.3, minLongTailRatio: 0.6,
+    maxOpeningRatio: 0.46, chapterAvgTail: 7.8, chapterAvgTurns: 4.2,
+    chapterLongTailRatio: 0.77, chapterMaxAvgFree: 6,
+  },
+  {
+    minSize: 20, maxSize: 26, minArrows: 20, maxArrows: 52, minTail: 1, maxTail: 14,
+    minDensity: 0.82, minAvgTail: 8.8, minAvgTurns: 4.4, minLongTailRatio: 0.7,
+    maxOpeningRatio: 0.44, chapterAvgTail: 9.8, chapterAvgTurns: 5.4,
+    chapterLongTailRatio: 0.8, chapterMaxAvgFree: 7.4,
+  },
 ];
 
 /**
@@ -130,8 +156,42 @@ pack.chapters.forEach((chapter, ci) => {
           `${where}: tails ${a.minTail}-${a.maxTail} outside budget ${budget.minTail}-${budget.maxTail}`,
         );
       }
+
+      // Level one is intentionally a five-arrow tutorial; applying campaign
+      // density/tangle floors to it would defeat its teaching purpose.
+      const opener = ci === 0 && li === 0;
+      if (!opener) {
+        if (a.density < budget.minDensity) {
+          errors.push(`${where}: density ${(a.density * 100).toFixed(0)}% below ${(budget.minDensity * 100).toFixed(0)}% floor`);
+        }
+        if (a.avgTail < budget.minAvgTail) {
+          errors.push(`${where}: average tail ${a.avgTail.toFixed(2)} below ${budget.minAvgTail}`);
+        }
+        if (a.avgTurns < budget.minAvgTurns) {
+          errors.push(`${where}: average turns ${a.avgTurns.toFixed(2)} below ${budget.minAvgTurns}`);
+        }
+        if (a.longTailRatio < budget.minLongTailRatio) {
+          errors.push(`${where}: long-tail share ${(a.longTailRatio * 100).toFixed(0)}% below ${(budget.minLongTailRatio * 100).toFixed(0)}%`);
+        }
+        const openingRatio = a.initialFree / Math.max(1, a.arrows);
+        if (openingRatio > budget.maxOpeningRatio) {
+          errors.push(`${where}: ${(openingRatio * 100).toFixed(0)}% of arrows open initially (max ${(budget.maxOpeningRatio * 100).toFixed(0)}%)`);
+        }
+      }
     }
   });
+
+  if (budget && stats.length > 0) {
+    const mean = (values: number[]): number => values.reduce((sum, value) => sum + value, 0) / values.length;
+    const avgTail = mean(stats.map((a) => a.avgTail));
+    const avgTurns = mean(stats.map((a) => a.avgTurns));
+    const longTailRatio = mean(stats.map((a) => a.longTailRatio));
+    const avgFree = mean(stats.map((a) => a.avgFree));
+    if (avgTail < budget.chapterAvgTail) errors.push(`${chapter.name}: average tail ${avgTail.toFixed(2)} below ${budget.chapterAvgTail}`);
+    if (avgTurns < budget.chapterAvgTurns) errors.push(`${chapter.name}: average turns ${avgTurns.toFixed(2)} below ${budget.chapterAvgTurns}`);
+    if (longTailRatio < budget.chapterLongTailRatio) errors.push(`${chapter.name}: long-tail share ${(longTailRatio * 100).toFixed(0)}% below ${(budget.chapterLongTailRatio * 100).toFixed(0)}%`);
+    if (avgFree > budget.chapterMaxAvgFree) errors.push(`${chapter.name}: average branching ${avgFree.toFixed(2)} above ${budget.chapterMaxAvgFree}`);
+  }
 
   perChapter.push(stats);
 });
@@ -182,14 +242,17 @@ pack.chapters.forEach((chapter, ci) => {
   console.log(
     `  ${chapter.name}: ${stats.length} levels | arrows ${Math.min(...arrows)}-${Math.max(...arrows)} ` +
       `(avg ${avg(arrows)}) | cells ${avg(stats.map((s) => s.cells))} | ` +
-      `density ${avg(stats.map((s) => s.density * 100))}% | openings ${avg(stats.map((s) => s.initialFree))}`,
+      `density ${avg(stats.map((s) => s.density * 100))}% | tail ${avg(stats.map((s) => s.avgTail))} | ` +
+      `turns ${avg(stats.map((s) => s.avgTurns))} | long ${avg(stats.map((s) => s.longTailRatio * 100))}% | ` +
+      `openings ${avg(stats.map((s) => s.initialFree))}`,
   );
 });
 bossStats.forEach((a, bi) => {
   const boss = bosses[bi]!;
   console.log(
     `  Boss ${bi + 1}: ${boss.w}x${boss.h} | ${a.arrows} arrows | ` +
-      `density ${(a.density * 100).toFixed(1)}% | openings ${a.initialFree}`,
+      `density ${(a.density * 100).toFixed(1)}% | tail ${a.avgTail.toFixed(1)} | ` +
+      `turns ${a.avgTurns.toFixed(1)} | openings ${a.initialFree}`,
   );
 });
 

@@ -2,7 +2,7 @@
  * The level pack, parsed once at module load.
  *
  * levels.json is imported (and therefore bundled) rather than fetched: packed
- * boards grew it to ~350 KB raw, but it gzips to ~45 KB and one fewer network
+ * boards are ~191 KB raw, but gzip to ~27 KB and one fewer network
  * request matters on portals that serve the game from a cold CDN edge.
  */
 import packJson from '../levels/levels.json';

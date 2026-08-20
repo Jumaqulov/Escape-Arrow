@@ -9,7 +9,7 @@ put, costing a heart. Clear every arrow before the clock runs out.
 
 Built with **Vite + TypeScript (strict) + Phaser 3**. No sprites, no images, no
 raster assets, no web fonts: every pixel on screen is drawn with
-`Phaser.Graphics`. The current production bundle is **~398 KiB gzipped**.
+`Phaser.Graphics`. The current production bundle is **~383 KiB gzipped**.
 
 ---
 
@@ -40,15 +40,16 @@ hint / eraser / grid / refill flows can all be exercised offline.
 | `npm run release` | `validate` → `build` → `zip` in one go |
 
 `npm run validate` is a hard gate: it exits non-zero if any level is
-unsolvable, malformed, duplicated, or outside its chapter's design budget.
+unsolvable, malformed, duplicated, or outside its chapter's density, length,
+winding, and opening-choice budgets.
 
 ```
-Chapter 1: 50 levels | arrows 5-67  (avg 54.9) | cells 209.3 | density 90.4% | openings 16.3
-Chapter 2: 50 levels | arrows 43-81 (avg 67.0) | cells 303.4 | density 93.0% | openings 19.0
-Chapter 3: 50 levels | arrows 54-103 (avg 83.4) | cells 413.2 | density 93.8% | openings 21.9
-Boss 1: 15x19 | 79 arrows  | density 95.1% | openings 19
-Boss 2: 18x22 | 101 arrows | density 93.9% | openings 23
-Boss 3: 20x26 | 118 arrows | density 93.1% | openings 41
+Chapter 1: 50 levels | arrows 5-37 (avg 28.8) | density 86.8% | tail 5.9 | turns 3.1 | long 75.4% | openings 9.7
+Chapter 2: 50 levels | arrows 23-39 (avg 31.4) | density 87.6% | tail 8.1 | turns 4.4 | long 81.4% | openings 10.8
+Chapter 3: 50 levels | arrows 23-41 (avg 34.7) | density 88.1% | tail 10.2 | turns 5.8 | long 84.4% | openings 12.0
+Boss 1: 15x19 | 24 arrows | density 88.4% | tail 9.5 | turns 5.2 | openings 8
+Boss 2: 18x22 | 29 arrows | density 91.2% | tail 11.4 | turns 7.1 | openings 11
+Boss 3: 20x26 | 32 arrows | density 87.9% | tail 13.3 | turns 7.9 | openings 12
 OK - all 150 levels and 3 bosses are solvable and within budget.
 ```
 
@@ -105,13 +106,16 @@ solution. The tail *is* free to lie across an **earlier** arrow's ray — that
 arrow is tapped later, by which time this one is long gone. That is what turns
 a pile of arrows into a dependency chain.
 
-The shipped campaign and boss boards use the density-first packer. Two
-most-constrained-first heuristics let it reach roughly 93–96% occupancy:
+The shipped campaign and boss boards use the density-first packer. Three
+cooperating heuristics keep roughly 87–91% of the grid occupied with far fewer,
+substantially longer bodies:
 
 - heads are placed where the fewest legal direction choices remain, with deeper
   cells winning ties;
-- tail walks consume dead-end pockets first, before those cells become
-  unreachable.
+- tail walks prefer cells crossing existing escape rays, adding dependencies
+  and reducing immediately open choices;
+- bounded backtracking consumes constrained pockets while deliberately turning
+  every few cells instead of keeping a boxed-in one-cell dart.
 
 The reusable core generator remains the source for the locally generated daily
 challenge. Both implementations preserve the same reverse-construction
@@ -147,14 +151,14 @@ The first two campaign boards are eligible for a one-time tap coach mark.
 ```
 level:     1   2   5  25  50  75 100 125 150
 grid:   8x10 12x16 13x16 13x17 14x18 16x20 17x21 18x24 19x25
-arrows:    5  45  44  50  67  65  81  79  99
+arrows:    5  22  27  27  33  33  35  37  38
 ```
 
 | Chapter | Campaign grids | Arrow range | Tail range | Boss |
 | --- | --- | --- | --- | --- |
-| 1 | 8×10 opener; 12×16 → 14×18 | 5–67 | 1–5 | 15×19, 79 arrows |
-| 2 | 14×18 → 17×21 | 43–81 | 1–7 | 18×22, 101 arrows |
-| 3 | 17×21 → 19×25 | 54–103 | 1–9 | 20×26, 118 arrows |
+| 1 | 8×10 opener; 12×16 → 14×18 | 5–37 | 1–8 | 15×19, 24 arrows |
+| 2 | 14×18 → 17×21 | 23–39 | 1–11 | 18×22, 29 arrows |
+| 3 | 17×21 → 19×25 | 23–41 | 1–14 | 20×26, 32 arrows |
 
 ---
 
@@ -366,7 +370,8 @@ npm run validate
 ```
 
 Hand-written levels are fine too — add them in the same format and
-`npm run validate` will solve-check them and check the tail and neck geometry.
+`npm run validate` will solve-check them, verify the tail/neck geometry, and
+enforce the campaign's long-tail and winding-quality floors.
 
 ## Constraints honoured
 

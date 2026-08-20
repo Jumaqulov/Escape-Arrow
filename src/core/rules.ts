@@ -171,6 +171,12 @@ export interface Analysis {
   /** Shortest and longest tail on the board. */
   minTail: number;
   maxTail: number;
+  /** Mean number of body cells behind each arrow head. */
+  avgTail: number;
+  /** Mean number of direction changes along each arrow body. */
+  avgTurns: number;
+  /** Share of arrows with at least five tail cells. */
+  longTailRatio: number;
   /** Fraction of cells occupied. */
   density: number;
   /** Roughly 0..100, higher is harder. */
@@ -195,6 +201,21 @@ export function analyze(board: BoardLike, w?: number, h?: number): Analysis {
 
   const cells = arrows.reduce((sum, a) => sum + 1 + a.tail.length, 0);
   const tails = arrows.map((a) => a.tail.length);
+  const turns = arrows.map((a) => {
+    const path = [a.head, ...a.tail];
+    let count = 0;
+    for (let i = 2; i < path.length; i++) {
+      const previous = path[i - 1]!;
+      const before = path[i - 2]!;
+      const current = path[i]!;
+      const previousDx = previous.x - before.x;
+      const previousDy = previous.y - before.y;
+      const currentDx = current.x - previous.x;
+      const currentDy = current.y - previous.y;
+      if (previousDx !== currentDx || previousDy !== currentDy) count++;
+    }
+    return count;
+  });
   const density = cells / Math.max(1, width * height);
 
   // Hard levels are the ones where, at almost every step, only one or two of
@@ -220,6 +241,9 @@ export function analyze(board: BoardLike, w?: number, h?: number): Analysis {
     cells,
     minTail: tails.length > 0 ? Math.min(...tails) : 0,
     maxTail: tails.length > 0 ? Math.max(...tails) : 0,
+    avgTail: tails.length > 0 ? tails.reduce((sum, tail) => sum + tail, 0) / tails.length : 0,
+    avgTurns: turns.length > 0 ? turns.reduce((sum, turn) => sum + turn, 0) / turns.length : 0,
+    longTailRatio: tails.length > 0 ? tails.filter((tail) => tail >= 5).length / tails.length : 0,
     density,
     difficulty,
     band,
