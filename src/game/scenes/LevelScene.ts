@@ -8,13 +8,25 @@ import type { Arrow, Cell, Board } from '../../core/types';
 import { DX, DY, arrowCells } from '../../core/types';
 import { blockerOf, freeArrows, isFree, pathCells } from '../../core/rules';
 import { parseLevel } from '../../core/format';
-import { ARROW_INK, COLORS, FONT, RADIUS, applyArrowSkin, applyChapterPalette, darken, hex, mix } from '../theme';
+import {
+  ARROW_INK,
+  COLORS,
+  FONT,
+  GAME_FEEL,
+  RADIUS,
+  applyArrowSkin,
+  applyChapterPalette,
+  darken,
+  hex,
+  mix,
+} from '../theme';
 import {
   Button,
   CoinButton,
   IconButton,
   setCenteredHitArea,
   confetti,
+  burstShapes,
   drawArrowMark,
   drawCard,
   drawDotGrid,
@@ -58,6 +70,15 @@ import { t } from '../i18n';
 import { getSdk } from '../../sdk/sdk';
 import { shouldShowTapTutorial } from '../tutorial';
 import { pathSlice } from '../level/flightPath';
+import { prefersReducedMotion } from '../motion';
+import {
+  boardEnergyPulse,
+  createBoardScan,
+  drawBoardInstrumentation,
+  heartShatter,
+  launchSparks,
+  type BoardFxBounds,
+} from '../ui/gameplayFx';
 
 interface ArrowView {
   arrow: Arrow;
@@ -190,6 +211,11 @@ export class LevelScene extends Phaser.Scene {
   private boardLayer!: Phaser.GameObjects.Container;
   private arrowLayer!: Phaser.GameObjects.Container;
   private fxLayer!: Phaser.GameObjects.Container;
+  private boardFxBounds!: BoardFxBounds;
+  private boardProgressGfx!: Phaser.GameObjects.Graphics;
+  private boardProgressValue = 0;
+  private boardProgressTween: Phaser.Tweens.Tween | null = null;
+  private boardScan: Phaser.GameObjects.Graphics | null = null;
   private overlayLayer: Phaser.GameObjects.Container | null = null;
   private tutorial: Phaser.GameObjects.Container | null = null;
 
@@ -240,6 +266,9 @@ export class LevelScene extends Phaser.Scene {
     this.holdFired = false;
     this.holdPressed = false;
     this.preview = [];
+    this.boardProgressValue = 0;
+    this.boardProgressTween = null;
+    this.boardScan = null;
     this.hintsUsed = 0;
     this.undosUsed = 0;
     this.hearts = MAX_HEARTS;
@@ -318,6 +347,10 @@ export class LevelScene extends Phaser.Scene {
       this.toolCursor?.destroy();
       this.toolCursor = null;
       this.stopTimerPulse();
+      if (this.boardScan) this.tweens.killTweensOf(this.boardScan);
+      this.boardScan = null;
+      this.boardProgressTween?.remove();
+      this.boardProgressTween = null;
       this.cancelHold();
     });
   }
@@ -565,19 +598,86 @@ export class LevelScene extends Phaser.Scene {
   private drawBoard(): void {
     const boardWidth = this.cell * this.board.w;
     const boardHeight = this.cell * this.board.h;
+    this.boardFxBounds = {
+      x: this.originX - BOARD_PAD,
+      y: this.originY - BOARD_PAD,
+      width: boardWidth + BOARD_PAD * 2,
+      height: boardHeight + BOARD_PAD * 2,
+      radius: RADIUS.card + 4,
+    };
 
     const g = this.add.graphics();
     drawCard(
       g,
-      this.originX - BOARD_PAD,
-      this.originY - BOARD_PAD,
-      boardWidth + BOARD_PAD * 2,
-      boardHeight + BOARD_PAD * 2,
-      RADIUS.card + 4,
+      this.boardFxBounds.x,
+      this.boardFxBounds.y,
+      this.boardFxBounds.width,
+      this.boardFxBounds.height,
+      this.boardFxBounds.radius,
+      mix(COLORS.card, COLORS.accent, 0.018),
     );
+    drawBoardInstrumentation(g, this.boardFxBounds, COLORS.accent);
     drawDotGrid(g, this.originX, this.originY, this.board.w, this.board.h, this.cell);
 
     this.boardLayer.add(g);
+
+    this.boardProgressGfx = this.add.graphics();
+    this.boardLayer.add(this.boardProgressGfx);
+    this.redrawBoardProgress(0);
+
+    this.boardScan = createBoardScan(this, this.boardFxBounds, COLORS.accent, this.boardLayer);
+  }
+
+  /** A slim extraction rail built into the board's top bezel. */
+  private redrawBoardProgress(value: number): void {
+    if (!this.boardProgressGfx) return;
+    const inset = Math.min(64, this.boardFxBounds.width * 0.14);
+    const x = this.boardFxBounds.x + inset;
+    const y = this.boardFxBounds.y + 9;
+    const width = this.boardFxBounds.width - inset * 2;
+    const fillWidth = width * Math.max(0, Math.min(1, value));
+
+    this.boardProgressGfx.clear();
+    this.boardProgressGfx.fillStyle(mix(COLORS.card, COLORS.ink, 0.1), 0.9);
+    this.boardProgressGfx.fillRoundedRect(x, y, width, 6, 3);
+    if (fillWidth <= 0) return;
+
+    this.boardProgressGfx.fillStyle(COLORS.accent, 0.18);
+    this.boardProgressGfx.fillRoundedRect(x - 3, y - 3, fillWidth + 6, 12, 6);
+    this.boardProgressGfx.fillStyle(COLORS.accent, 1);
+    this.boardProgressGfx.fillRoundedRect(x, y, Math.max(6, fillWidth), 6, 3);
+    this.boardProgressGfx.fillStyle(COLORS.card, 1);
+    this.boardProgressGfx.fillCircle(x + fillWidth, y + 3, 2.4);
+  }
+
+  private updateBoardProgress(animate: boolean): void {
+    const target = this.totalArrows > 0
+      ? (this.totalArrows - this.board.arrows.length) / this.totalArrows
+      : 0;
+    this.boardProgressTween?.remove();
+    this.boardProgressTween = null;
+
+    if (!animate || prefersReducedMotion()) {
+      this.boardProgressValue = target;
+      this.redrawBoardProgress(target);
+      return;
+    }
+
+    const state = { value: this.boardProgressValue };
+    this.boardProgressTween = this.tweens.add({
+      targets: state,
+      value: target,
+      duration: GAME_FEEL.response,
+      ease: 'Cubic.easeOut',
+      onUpdate: () => {
+        this.boardProgressValue = state.value;
+        this.redrawBoardProgress(state.value);
+      },
+      onComplete: () => {
+        this.boardProgressValue = target;
+        this.boardProgressTween = null;
+      },
+    });
   }
 
   // ---------------------------------------------------------------- arrows
@@ -690,6 +790,13 @@ export class LevelScene extends Phaser.Scene {
     this.holdPressed = true;
     if (this.busy || this.finished || this.failed) return;
     this.holdView = view;
+    this.tweens.killTweensOf(view.container);
+    this.tweens.add({
+      targets: view.container,
+      scale: 1.055,
+      duration: prefersReducedMotion() ? 1 : GAME_FEEL.snap,
+      ease: 'Quad.easeOut',
+    });
     // The eraser owns the whole gesture: previewing an arrow about to be
     // deleted answers a question nobody asked.
     if (this.eraserArmed) return;
@@ -710,11 +817,21 @@ export class LevelScene extends Phaser.Scene {
   }
 
   private cancelHold(): void {
+    const held = this.holdView;
     this.holdTimer?.remove();
     this.holdTimer = null;
     this.holdView = null;
     this.holdFired = false;
     this.clearPreview();
+    if (held && this.views.has(held.arrow.id)) {
+      this.tweens.killTweensOf(held.container);
+      this.tweens.add({
+        targets: held.container,
+        scale: 1,
+        duration: prefersReducedMotion() ? 1 : GAME_FEEL.snap,
+        ease: 'Quad.easeOut',
+      });
+    }
   }
 
   private clearPreview(): void {
@@ -824,7 +941,9 @@ export class LevelScene extends Phaser.Scene {
     const origin = body[0]!;
 
     rippleRing(this, origin.x, origin.y, this.cell * 0.42, COLORS.accent, this.fxLayer);
-    this.time.delayedCall(90, () => rippleRing(this, origin.x, origin.y, this.cell * 0.3, COLORS.accent, this.fxLayer));
+    this.time.delayedCall(90, () =>
+      rippleRing(this, origin.x, origin.y, this.cell * 0.3, COLORS.accent, this.fxLayer),
+    );
 
     if (this.streak >= 3) {
       const tone = this.streak >= 7 ? COLORS.amber : this.streak >= 5 ? COLORS.pink : COLORS.accent;
@@ -842,7 +961,6 @@ export class LevelScene extends Phaser.Scene {
         : dy > 0
           ? this.board.h - arrow.head.y
           : arrow.head.y + 1;
-
     const track = body.slice().reverse();
     track.push({ x: origin.x + dx * cellsToEdge * this.cell, y: origin.y + dy * cellsToEdge * this.cell });
 
@@ -855,6 +973,8 @@ export class LevelScene extends Phaser.Scene {
     const total = cum[cum.length - 1]!;
     const headIndex = body.length - 1;
 
+    this.tweens.killTweensOf(view.container);
+    view.container.setScale(1);
     this.paint(view, COLORS.accent);
 
     // Arc length of the body itself. It never changes: the arrow is a rigid
@@ -919,6 +1039,10 @@ export class LevelScene extends Phaser.Scene {
 
     const sdk = getSdk();
     if (sdk.supportsVibration) sdk.vibrate(80);
+
+    const rejectedAt = this.cellCenter(view.arrow.head);
+    boardEnergyPulse(this, this.boardFxBounds, COLORS.danger, this.fxLayer, true);
+    launchSparks(this, rejectedAt.x, rejectedAt.y, view.arrow.dir, COLORS.danger, this.cell * 0.65, this.fxLayer);
 
     this.paint(view, COLORS.danger);
     this.time.delayedCall(220, () => {
@@ -1055,12 +1179,18 @@ export class LevelScene extends Phaser.Scene {
     drawCard(pill, pillX, HUD_Y - HUD_HEIGHT / 2, pillWidth, HUD_HEIGHT, RADIUS.pill + 4);
 
     // ---- left: arrows extracted so far ----------------------------------
+    const extractionChip = this.add.graphics();
+    extractionChip.fillStyle(mix(COLORS.card, COLORS.accent, 0.1), 1);
+    extractionChip.fillRoundedRect(pillX + 18, HUD_Y - 26, 134, 52, 22);
+    extractionChip.lineStyle(2, COLORS.accent, 0.14);
+    extractionChip.strokeRoundedRect(pillX + 18, HUD_Y - 26, 134, 52, 22);
+
     const mark = this.add.graphics();
-    drawArrowMark(mark, 18, COLORS.accent);
-    mark.setPosition(pillX + 40, HUD_Y);
+    drawArrowMark(mark, 19, COLORS.accent);
+    mark.setPosition(pillX + 44, HUD_Y);
 
     this.counter = this.add
-      .text(pillX + 62, HUD_Y, '', {
+      .text(pillX + 70, HUD_Y, '', {
         fontFamily: FONT,
         fontSize: '20px',
         color: hex(COLORS.ink),
@@ -1155,7 +1285,13 @@ export class LevelScene extends Phaser.Scene {
     // ---- right: hearts ---------------------------------------------------
     // 40px apart for a 28px heart: enough air that three read as three, not
     // as one pink blob.
-    this.heartLayer = this.add.container(pillX + pillWidth - 112, HUD_Y);
+    const heartChip = this.add.graphics();
+    heartChip.fillStyle(mix(COLORS.card, COLORS.pink, 0.085), 1);
+    heartChip.fillRoundedRect(pillX + pillWidth - 152, HUD_Y - 26, 134, 52, 22);
+    heartChip.lineStyle(2, COLORS.pink, 0.13);
+    heartChip.strokeRoundedRect(pillX + pillWidth - 152, HUD_Y - 26, 134, 52, 22);
+
+    this.heartLayer = this.add.container(pillX + pillWidth - 128, HUD_Y);
     for (let i = 0; i < MAX_HEARTS; i++) {
       const g = this.add.graphics();
       drawHeart(g, 0, 0, 28, COLORS.pink);
@@ -1169,6 +1305,7 @@ export class LevelScene extends Phaser.Scene {
   private updateCounter(pop: boolean): void {
     const extracted = this.totalArrows - this.board.arrows.length;
     this.counter.setText(`${extracted}/${this.totalArrows}`);
+    this.updateBoardProgress(pop);
     if (!pop) return;
     this.counter.setScale(1);
     this.tweens.add({
@@ -1689,66 +1826,136 @@ export class LevelScene extends Phaser.Scene {
     this.overlayLayer = layer;
     getSdk().gameplayStop();
 
-    const dim = this.add.rectangle(width / 2, height / 2, width, height, COLORS.ink, 0.55);
+    const tone = tool === 'hint' ? COLORS.accent : tool === 'eraser' ? COLORS.pink : COLORS.ok;
+    const titleTone = mix(tone, COLORS.card, 0.32);
+    const reduced = prefersReducedMotion();
+    const heroX = width / 2;
+    const heroY = height * 0.45;
+
+    const dim = this.add.rectangle(width / 2, height / 2, width, height, mix(COLORS.ink, tone, 0.08), 0.72);
     dim.setInteractive();
     layer.add(dim);
 
-    // Golden rays, the classic reward flourish.
+    // Alternating warm/tool-coloured rays make each unlock feel specific.
     const rays = this.add.graphics();
-    for (let i = 0; i < 16; i++) {
-      const a0 = (i / 16) * Math.PI * 2;
-      const a1 = a0 + Math.PI / 16;
-      rays.fillStyle(COLORS.amber, 0.22);
+    for (let i = 0; i < 20; i++) {
+      const a0 = (i / 20) * Math.PI * 2;
+      const a1 = a0 + Math.PI / 20;
+      rays.fillStyle(i % 2 === 0 ? COLORS.amber : tone, i % 2 === 0 ? 0.15 : 0.1);
       rays.beginPath();
       rays.moveTo(0, 0);
-      rays.arc(0, 0, 300, a0, a1, false);
+      rays.arc(0, 0, 330, a0, a1, false);
       rays.closePath();
       rays.fillPath();
     }
-    rays.setPosition(width / 2, height * 0.45);
+    rays.setPosition(heroX, heroY);
     layer.add(rays);
-    this.tweens.add({ targets: rays, angle: 360, duration: 24000, repeat: -1 });
+    if (!reduced) this.tweens.add({ targets: rays, angle: 360, duration: 26000, repeat: -1 });
+
+    const aura = this.add.graphics();
+    softRadial(aura, heroX, heroY, 190, tone, 0.56, 32);
+    layer.add(aura);
+
+    const orbit = this.add.graphics();
+    orbit.lineStyle(3, titleTone, 0.4);
+    orbit.strokeCircle(0, 0, 132);
+    orbit.lineStyle(2, COLORS.card, 0.18);
+    orbit.strokeCircle(0, 0, 154);
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2;
+      const radius = i % 2 === 0 ? 132 : 154;
+      orbit.fillStyle(i % 3 === 0 ? COLORS.amber : COLORS.card, i % 3 === 0 ? 0.9 : 0.58);
+      orbit.fillCircle(Math.cos(angle) * radius, Math.sin(angle) * radius, i % 3 === 0 ? 5 : 3);
+    }
+    orbit.setPosition(heroX, heroY);
+    layer.add(orbit);
+    if (!reduced) this.tweens.add({ targets: orbit, angle: -360, duration: 15000, repeat: -1 });
 
     const label = tool === 'hint' ? t('toolHint') : tool === 'eraser' ? t('toolEraser') : t('toolGrid');
     const desc = tool === 'hint' ? t('toolHintDesc') : tool === 'eraser' ? t('toolEraserDesc') : t('toolGridDesc');
 
+    const title = this.add
+      .text(width / 2, height * 0.225, label, {
+        fontFamily: FONT,
+        fontSize: '48px',
+        color: hex(titleTone),
+        fontStyle: '800',
+      })
+      .setOrigin(0.5)
+      .setLetterSpacing(3)
+      .setShadow(0, 5, '#000000', 8, false, true);
+    layer.add(title);
+    title.setAlpha(0).setY(title.y + 18);
+    this.tweens.add({ targets: title, alpha: 1, y: title.y - 18, duration: reduced ? 1 : 360, ease: 'Cubic.easeOut' });
+
+    const openPill = this.add.graphics();
+    openPill.fillStyle(COLORS.card, 0.13);
+    openPill.fillRoundedRect(width / 2 - 72, height * 0.282 - 20, 144, 40, 20);
+    openPill.lineStyle(2, COLORS.card, 0.22);
+    openPill.strokeRoundedRect(width / 2 - 72, height * 0.282 - 20, 144, 40, 20);
+    layer.add(openPill);
     layer.add(
       this.add
-        .text(width / 2, height * 0.24, label, {
+        .text(width / 2, height * 0.282, t('unlocked'), {
           fontFamily: FONT,
-          fontSize: '46px',
-          color: hex(0x59c2ff),
-          fontStyle: '800',
-        })
-        .setOrigin(0.5)
-        .setLetterSpacing(3),
-    );
-    layer.add(
-      this.add
-        .text(width / 2, height * 0.29, t('unlocked'), {
-          fontFamily: FONT,
-          fontSize: '26px',
+          fontSize: '22px',
           color: hex(COLORS.card),
-          fontStyle: 'bold',
+          fontStyle: '800',
         })
         .setOrigin(0.5),
     );
 
+    const badge = this.add.container(heroX, heroY);
+    const medal = this.add.graphics();
+    medal.fillStyle(tone, 0.3);
+    medal.fillCircle(0, 0, 112);
+    medal.lineStyle(7, titleTone, 0.65);
+    medal.strokeCircle(0, 0, 104);
+    medal.fillStyle(COLORS.card, 1);
+    medal.fillCircle(0, 0, 88);
+    medal.lineStyle(3, tone, 0.2);
+    medal.strokeCircle(0, 0, 78);
+    badge.add(medal);
+
     const art = this.add.graphics();
     const draw = tool === 'hint' ? iconMagnifier : tool === 'eraser' ? iconEraser : iconGrid;
-    draw(art, 150, COLORS.card, 14);
-    art.setPosition(width / 2, height * 0.45);
-    layer.add(art);
-    art.setScale(0);
-    this.tweens.add({ targets: art, scale: 1, duration: 420, ease: 'Back.easeOut' });
+    draw(art, 116, tone, 12);
+    badge.add(art);
+    badge.setScale(0).setAlpha(0);
+    layer.add(badge);
+    this.tweens.add({ targets: badge, scale: 1, alpha: 1, duration: reduced ? 1 : 480, ease: 'Back.easeOut' });
+    if (!reduced) {
+      this.tweens.add({
+        targets: badge,
+        y: heroY - 8,
+        duration: 1500,
+        delay: 520,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
+
+    this.time.delayedCall(reduced ? 0 : 190, () => {
+      if (!layer.active) return;
+      burstShapes(this, heroX, heroY, reduced ? 6 : 18, [tone, COLORS.pink, COLORS.amber, COLORS.card], layer);
+    });
+
+    const descBg = this.add.graphics();
+    drawCard(descBg, width / 2 - 250, height * 0.61 - 37, 500, 74, 37, mix(COLORS.card, tone, 0.09), false);
+    descBg.lineStyle(2, tone, 0.25);
+    descBg.strokeRoundedRect(width / 2 - 250, height * 0.61 - 37, 500, 74, 37);
+    layer.add(descBg);
 
     layer.add(
       this.add
-        .text(width / 2, height * 0.62, desc, {
+        .text(width / 2, height * 0.61, desc, {
           fontFamily: FONT,
-          fontSize: '22px',
-          color: hex(COLORS.card),
-          fontStyle: 'bold',
+          fontSize: '21px',
+          color: hex(COLORS.ink),
+          fontStyle: '800',
+          wordWrap: { width: 440 },
+          align: 'center',
         })
         .setOrigin(0.5),
     );
@@ -1770,6 +1977,8 @@ export class LevelScene extends Phaser.Scene {
           // The rays spin forever; the tween outlives the Graphics unless it
           // is killed before the layer goes.
           this.tweens.killTweensOf(rays);
+          this.tweens.killTweensOf(orbit);
+          this.tweens.killTweensOf(badge);
           this.overlayLayer = null;
           layer.destroy();
           this.reattemptFail();
@@ -1785,6 +1994,7 @@ export class LevelScene extends Phaser.Scene {
 
     const g = this.hearts3[this.hearts];
     if (g) {
+      heartShatter(this, this.heartLayer.x + g.x, this.heartLayer.y + g.y, COLORS.pink);
       this.tweens.add({
         targets: g,
         scale: 0.1,

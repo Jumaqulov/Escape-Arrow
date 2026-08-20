@@ -9,7 +9,7 @@ put, costing a heart. Clear every arrow before the clock runs out.
 
 Built with **Vite + TypeScript (strict) + Phaser 3**. No sprites, no images, no
 raster assets, no web fonts: every pixel on screen is drawn with
-`Phaser.Graphics`. The current production bundle is **~395 KiB gzipped**.
+`Phaser.Graphics`. The current production bundle is **~398 KiB gzipped**.
 
 ---
 
@@ -250,6 +250,12 @@ Two Phaser limits shape the drawing code:
   corners with a filled circle of half the line width. That is what makes the
   arrows read as rounded line art rather than mitred sticks.
 
+Gameplay uses a restrained **kinetic blueprint** layer rather than decorative
+sprites: directional rails drift behind the scene, while the board keeps a
+subtle scanning field and extraction rail. Blocked taps answer with a red board
+pulse and heart fragments. The ambient loops and ceremony motion respect the
+system's reduced-motion preference.
+
 Head orientation comes from a single `HEAD_ANGLE` map (`{R:0, D:90, L:180,
 U:270}`) — never re-derived from `DX/DY` — and `src/game/devcheck.ts` asserts it
 in dev builds. It is tree-shaken out of production.
@@ -279,11 +285,13 @@ src/
     i18n.ts        EN / RU / TR / ES / PT / UZ dictionary
     progress.ts    stars, unlocks, economy, daily/boss state, settings
     tutorial.ts    one-time opening-board coach eligibility
+    motion.ts      reduced-motion detection for ambient/gameplay effects
     level/
       flightPath.ts  sampled flight geometry and corner-preserving path slices
     ui.ts          buttons, icons, cards, modals, and effects
     ui/
       arrow.ts     arrow-head geometry, line renderer, and glow
+      gameplayFx.ts board instrumentation, launch/exit pulses, heart fragments
     devcheck.ts    dev-only invariants (arrow head rotation)
     scenes/        Boot, Menu, LevelSelect, Level, Win, Settings, Shop
   levels/levels.json   150 campaign levels + 3 bosses, format v2

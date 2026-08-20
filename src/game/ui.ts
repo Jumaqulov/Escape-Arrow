@@ -9,7 +9,8 @@
  * sticks.
  */
 import Phaser from 'phaser';
-import { COLORS, FONT, RADIUS, SHADOW_ALPHA, darken, hex, mix } from './theme';
+import { COLORS, FONT, GAME_FEEL, RADIUS, SHADOW_ALPHA, darken, hex, mix } from './theme';
+import { prefersReducedMotion } from './motion';
 import { arrowHeadPoints, drawPolyArrow } from './ui/arrow';
 export {
   HEAD_ANGLE,
@@ -1164,6 +1165,40 @@ function softBlob(g: Phaser.GameObjects.Graphics, radius: number, color: number,
 export function ambientBackdrop(scene: Phaser.Scene, seed = 1): Phaser.GameObjects.Container {
   const { width, height } = scene.cameras.main;
   const layer = scene.add.container(0, 0).setDepth(-10);
+  const reduced = prefersReducedMotion();
+
+  // Structural rails keep the atmosphere from becoming a generic wash of
+  // blobs: the whole game is about direction, lanes and exits.
+  const rails = scene.add.graphics();
+  rails.lineStyle(2, COLORS.ambient, 0.075);
+  for (let row = 0; row < 4; row++) {
+    const y = 130 + row * 330 + ((seed * 37 + row * 29) % 80);
+    rails.beginPath();
+    rails.moveTo(-80, y + 70);
+    rails.lineTo(width + 80, y - 70);
+    rails.strokePath();
+    for (let x = 30 + (row % 2) * 70; x < width; x += 150) {
+      const py = y + 70 - ((x + 80) / (width + 160)) * 140;
+      rails.lineBetween(x - 10, py - 7, x, py);
+      rails.lineBetween(x - 10, py + 7, x, py);
+    }
+  }
+  rails.lineStyle(2, COLORS.ambient, 0.045);
+  rails.strokeCircle(width * 0.5, height * 0.48, Math.min(width, height) * 0.34);
+  rails.strokeCircle(width * 0.5, height * 0.48, Math.min(width, height) * 0.43);
+  layer.add(rails);
+
+  if (!reduced) {
+    scene.tweens.add({
+      targets: rails,
+      y: 18,
+      alpha: { from: 0.72, to: 1 },
+      duration: GAME_FEEL.ambient + 800,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+  }
 
   for (let i = 0; i < 5; i++) {
     const g = scene.add.graphics();
@@ -1175,15 +1210,17 @@ export function ambientBackdrop(scene: Phaser.Scene, seed = 1): Phaser.GameObjec
     g.setPosition(x, y);
     layer.add(g);
 
-    scene.tweens.add({
-      targets: g,
-      x: x + (i % 2 === 0 ? 70 : -70),
-      y: y + (i % 3 === 0 ? -60 : 50),
-      duration: 9000 + i * 1900,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
-    });
+    if (!reduced) {
+      scene.tweens.add({
+        targets: g,
+        x: x + (i % 2 === 0 ? 70 : -70),
+        y: y + (i % 3 === 0 ? -60 : 50),
+        duration: GAME_FEEL.ambient + 2600 + i * 1900,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
   }
 
   return layer;

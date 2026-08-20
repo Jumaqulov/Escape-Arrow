@@ -133,6 +133,14 @@ export const RADIUS = {
   button: 14,
 };
 
+/** Shared visual rhythm for gameplay feedback and ambient motion. */
+export const GAME_FEEL = {
+  snap: 110,
+  response: 400,
+  settle: 640,
+  ambient: 6400,
+} as const;
+
 /** Clockwise rotation applied to an up-pointing glyph. */
 export const DIR_ANGLES: Readonly<Record<Dir, number>> = { U: 0, R: 90, D: 180, L: 270 };
 
